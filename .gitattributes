@@ -1,0 +1,2 @@
+# install.sh runs on Linux; Windows line endings would break it there.
+*.sh text eol=lf
