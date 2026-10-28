@@ -6,6 +6,7 @@ import { ROOM_W, ROOM_H, emptySpots, furnishRoom, themeFor } from './office-room
 const GAP = 1;
 const SPEED = 2.2;
 const WUDHU_MS = 2500;
+const DEBATE_LINE_MS = 3500;
 const MAX_ZOOM = 4;
 // Above this the floor cache would get huge on high-DPI screens; it is stretched instead.
 const MAX_CACHE_SCALE = 4;
@@ -34,6 +35,24 @@ const KHUTBAH_LINES = [
   'Jangan ghibahin klien.',
 ];
 
+// Small talk turned argument, for idle pairs in the lobby. Lines alternate between the two.
+const LOBBY_DEBATES = [
+  ['Bubur tuh harus diaduk, biar rata.', 'Diaduk malah kayak muntahan kucing.', 'Yang penting rasanya, bukan tampilannya!', 'Makan pakai mata juga, bro.'],
+  ['Kerja di kantor bikin fokus.', 'WFH lebih produktif, gak kena macet.', 'Tapi rapat online tuh capek.', 'Ya rapatnya aja dikurangin.'],
+  ['Dark mode paling enak di mata.', 'Siang-siang malah silau pantulan.', 'Itu layarmu aja yang kotor.', 'Oke, voting di grup aja.'],
+  ['Makan siang nasi padang, gas?', 'Warteg lah, murah dan banyak pilihan.', 'Rendang gak ada lawan.', 'Tanggal tua, bos. Warteg menang.'],
+  ['Konten pendek lebih gampang viral.', 'Video panjang bikin orang percaya.', 'Orang scroll dua detik doang.', 'Ya udah, yang panjang dipotong jadi klip.'],
+  ['Rapat pagi biar semangat.', 'Pagi itu waktunya ngopi, bukan rapat.', 'Sore udah pada capek.', 'Rapatnya sambil ngopi, deal.'],
+];
+
+// Same palette as the app's CSS tokens (canvas can't read custom properties cheaply every frame).
+const INK = '#0f1923';
+const PAPER = '#ece8e1';
+const RED = '#ff4655';
+const AMBER = '#f5c451';
+const NAME_FONT = '"Barlow", system-ui, sans-serif';
+const LABEL_FONT = '"Barlow Condensed", "Barlow", system-ui, sans-serif';
+
 const isNight = () => {
   const hour = new Date().getHours();
   return hour >= 19 || hour < 6;
@@ -41,8 +60,9 @@ const isNight = () => {
 
 export function createOffice(canvas, { onSelect }) {
   const ctx = canvas.getContext('2d');
-  // Silkscreen is only used on the canvas here, and canvas text never triggers a webfont download.
-  document.fonts?.load('11px Silkscreen');
+  // Canvas text never triggers a webfont download, so ask for the faces it uses up front.
+  document.fonts?.load(`700 12px ${LABEL_FONT}`);
+  document.fonts?.load(`600 12px ${NAME_FONT}`);
   let rooms = [];
   let items = [];
   let pools = [];
@@ -61,6 +81,8 @@ export function createOffice(canvas, { onSelect }) {
   const camera = { zoom: 1, center: null, target: null };
   let drag = null;
   let schedule = null;
+  // The debate the server says is happening, with its first line pinned to this clock.
+  let meeting = null;
   let hitboxes = [];
   let lastTime = 0;
   let running = false;
@@ -218,6 +240,7 @@ export function createOffice(canvas, { onSelect }) {
     if (tile) return goTo(person, tile, choice[1]);
 
     const partner = [...people.values()].find((p) => p !== person && (p.status?.state ?? 'idle') === 'idle' && !p.partner);
+    if (roll < 0.84 && partner && startDebate(person, partner, now)) return undefined;
     const chatSpots = free(spots.chat);
     if (partner && chatSpots.length >= 2) {
       goTo(person, chatSpots[0], 'ngobrol');
@@ -228,6 +251,23 @@ export function createOffice(canvas, { onSelect }) {
       return undefined;
     }
     return goTo(person, person.seat, null);
+  }
+
+  // Two idle agents walk to the lobby and argue about something that doesn't matter.
+  function startDebate(person, partner, now) {
+    const places = free(spots.debate);
+    if (places.length < 2) return false;
+    const lines = pick(LOBBY_DEBATES);
+    const startAt = now + 5000;
+    goTo(person, places[0], 'debat');
+    goTo(partner, places[1], 'debat');
+    person.partner = partner.id;
+    partner.partner = person.id;
+    person.debate = { lines, startAt, side: 0 };
+    partner.debate = { lines, startAt, side: 1 };
+    person.decideAt = startAt + lines.length * DEBATE_LINE_MS + 1500;
+    partner.decideAt = person.decideAt;
+    return true;
   }
 
   function unpair(person) {
@@ -266,7 +306,9 @@ export function createOffice(canvas, { onSelect }) {
       if (['wudhu', 'salat', 'imam'].includes(person.activity)) person.decideAt = 0;
 
       if (state === 'meeting') {
-        goTo(person, spots.meeting[meetingIndex++ % spots.meeting.length] ?? person.seat, null);
+        // No meeting room: they stand together in the lobby instead.
+        const table = spots.meeting.length ? spots.meeting : spots.debate;
+        goTo(person, table[meetingIndex++ % table.length] ?? person.seat, null);
       } else if (AT_DESK.has(state)) {
         goTo(person, person.seat, null);
       } else if (now > person.decideAt || !person.goal) {
@@ -544,28 +586,36 @@ export function createOffice(canvas, { onSelect }) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const textPx = Math.round(Math.min(16, Math.max(11, scale * 4.4)));
-    const nameFont = `700 ${textPx}px "Plus Jakarta Sans", system-ui, sans-serif`;
-    const tagFont = `600 ${textPx - 1}px "Plus Jakarta Sans", system-ui, sans-serif`;
+    const nameFont = `700 ${textPx}px ${NAME_FONT}`;
+    const tagFont = `600 ${textPx - 1}px ${NAME_FONT}`;
 
     for (const room of rooms) {
       const p = corner(room.x + room.w / 2, room.y);
       ctx.globalAlpha = dim(room.id);
-      ctx.font = `400 ${textPx}px Silkscreen, "Plus Jakarta Sans", system-ui, sans-serif`;
+      ctx.font = `700 ${textPx + 1}px ${LABEL_FONT}`;
       // Open rooms only have a low railing, so their label sits just above it.
       const lift = room.walls === 'railing' ? 20 : WALL + 8;
-      pill(room.label, p.x * scale, (p.y - lift) * scale, 'rgb(18 26 46 / 0.88)', '#edf0f7');
+      plate(room.label.toUpperCase(), p.x * scale, (p.y - lift) * scale);
     }
 
+    // Zoomed far out (a phone showing the whole office) every card would overlap the next one,
+    // so only "needs you" markers stay; picking a room zooms in and brings the rest back.
+    const compact = scale < 1;
     for (const hit of hitboxes) {
       const person = people.get(hit.id);
       ctx.globalAlpha = hit.alpha;
       const x = hit.x * scale;
       const y = hit.y * scale;
+      if (compact) {
+        ctx.font = tagFont;
+        if (person.status?.state === 'waiting') pill('!', x, y - 10 * scale, AMBER, '#2a1d00');
+        continue;
+      }
       // A saf of name tags is unreadable; names come back after salat or when you pick someone.
       if (!hit.praying || hit.id === selected) {
         ctx.font = nameFont;
-        ctx.fillStyle = hit.id === selected ? '#f4b942' : '#ffffff';
-        ctx.strokeStyle = 'rgb(20 16 30 / 0.75)';
+        ctx.fillStyle = hit.id === selected ? RED : '#ffffff';
+        ctx.strokeStyle = 'rgb(15 25 35 / 0.8)';
         ctx.lineWidth = 3;
         ctx.strokeText(person.name, x, y + 22 * scale);
         ctx.fillText(person.name, x, y + 22 * scale);
@@ -573,15 +623,18 @@ export function createOffice(canvas, { onSelect }) {
 
       const state = person.status?.state ?? 'idle';
       ctx.font = tagFont;
-      if (state !== 'idle' && person.status?.text) {
+      const said = hit.settled ? speech(person, now) : null;
+      if (said != null) {
+        if (said) bubble(said, x, y - 8 * scale, state === 'meeting' ? STATUS_DOT.meeting : null);
+      } else if (state !== 'idle' && person.status?.text) {
         // A card over their head with what they're on right now.
         const text = truncate(person.status.text, 28);
-        if (state === 'waiting') pill(`! ${text}`, x, y - 16 * scale, '#f4b942', '#2a1d00');
+        if (state === 'waiting') pill(`! ${text}`, x, y - 16 * scale, AMBER, '#2a1d00');
         else tag(text, x, y - 16 * scale, STATUS_DOT[state] ?? '#9ba6c2');
-      } else if (person.activity && hit.settled && !['salat', 'imam'].includes(person.activity)) {
+      } else if (person.activity && hit.settled && !['salat', 'imam', 'debat'].includes(person.activity)) {
         // Chat partners take turns "talking" so the pair reads as a conversation.
         const talking = person.activity !== 'ngobrol' || Math.floor(now / 1500) % 2 === (person.id < person.partner ? 0 : 1);
-        if (talking) pill(person.activity === 'ngobrol' ? '…' : person.activity, x, y - 14 * scale, 'rgb(255 255 255 / 0.92)', '#2a3350');
+        if (talking) pill(person.activity === 'ngobrol' ? '…' : person.activity, x, y - 14 * scale, 'rgb(236 232 225 / 0.94)', INK);
       }
     }
 
@@ -592,20 +645,83 @@ export function createOffice(canvas, { onSelect }) {
       const y = (p.y - (khatib.raised ? MIMBAR_H : 0) - 14) * scale;
       const name = `${OWNER.name} · khatib`;
       ctx.font = nameFont;
-      ctx.fillStyle = '#f4b942';
-      ctx.strokeStyle = 'rgb(20 16 30 / 0.75)';
+      ctx.fillStyle = AMBER;
+      ctx.strokeStyle = 'rgb(15 25 35 / 0.8)';
       ctx.lineWidth = 3;
       ctx.strokeText(name, x, y + 22 * scale);
       ctx.fillText(name, x, y + 22 * scale);
       if (prayer.phase === 'khutbah') {
         ctx.font = tagFont;
-        pill(KHUTBAH_LINES[Math.floor(now / 6000) % KHUTBAH_LINES.length], x, y - 16 * scale, 'rgb(255 255 255 / 0.95)', '#2a3350');
+        pill(KHUTBAH_LINES[Math.floor(now / 6000) % KHUTBAH_LINES.length], x, y - 16 * scale, 'rgb(236 232 225 / 0.96)', INK);
       }
     }
     ctx.globalAlpha = 1;
   }
 
+  /**
+   * What this person is saying right now in a debate: a line, '' while it's someone else's
+   * turn, or null when they aren't debating (so the usual status card shows).
+   */
+  function speech(person, now) {
+    const state = person.status?.state ?? 'idle';
+    if (state === 'meeting' && meeting?.agents.includes(person.id)) {
+      const turn = meeting.agents.indexOf(person.id);
+      if (meeting.startAt == null) return Math.floor(now / 1800) % meeting.agents.length === turn ? '…' : '';
+      const line = meeting.lines[Math.floor((now - meeting.startAt) / meeting.lineMs)];
+      return line?.agent === person.id ? line.text : '';
+    }
+    if (state === 'idle' && person.activity === 'debat' && person.debate) {
+      const i = Math.floor((now - person.debate.startAt) / DEBATE_LINE_MS);
+      return i >= 0 && i % 2 === person.debate.side ? person.debate.lines[i] ?? '' : '';
+    }
+    return null;
+  }
+
   const fontPx = () => Number(ctx.font.match(/(\d+)px/)[1]);
+
+  function wrap(text, maxWidth) {
+    const lines = [];
+    let line = '';
+    for (const word of text.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (line && ctx.measureText(next).width > maxWidth) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = next;
+      }
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  // Speech bubble with a tail pointing at the speaker; the tail's tip sits at y.
+  function bubble(text, x, y, edge) {
+    const size = fontPx();
+    let lines = wrap(text, size * 15);
+    if (lines.length > 4) lines = [...lines.slice(0, 3), `${lines[3]}…`];
+    const lineH = size + 4;
+    const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 18;
+    const h = lines.length * lineH + 10;
+    const top = y - h - 6;
+    ctx.fillStyle = 'rgb(15 25 35 / 0.3)';
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2 + 1, top + 2, w, h, 3);
+    ctx.fill();
+    ctx.fillStyle = PAPER;
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2, top, w, h, 3);
+    ctx.moveTo(x - 6, top + h);
+    ctx.lineTo(x, top + h + 6);
+    ctx.lineTo(x + 6, top + h);
+    ctx.fill();
+    if (edge) {
+      ctx.fillStyle = edge;
+      ctx.fillRect(x - w / 2 + 6, top, w - 12, 2);
+    }
+    ctx.fillStyle = INK;
+    lines.forEach((l, i) => ctx.fillText(l, x, top + 5 + lineH * (i + 0.5)));
+  }
 
   // Rounded label sized from the current font, so it grows with the office.
   function pill(text, x, y, bg, fg) {
@@ -613,33 +729,46 @@ export function createOffice(canvas, { onSelect }) {
     const h = fontPx() + 7;
     ctx.fillStyle = bg;
     ctx.beginPath();
-    ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2);
+    ctx.roundRect(x - w / 2, y - h / 2, w, h, 2);
     ctx.fill();
     ctx.fillStyle = fg;
     ctx.fillText(text, x, y + 0.5);
   }
 
-  // White card with a coloured state dot, for what an agent is working on.
+  // Room name plate: dark slab with a red edge, like a callout on a map.
+  function plate(text, x, y) {
+    const w = ctx.measureText(text).width + 22;
+    const h = fontPx() + 9;
+    const left = x - w / 2;
+    ctx.fillStyle = 'rgb(15 25 35 / 0.9)';
+    ctx.beginPath();
+    ctx.moveTo(left, y - h / 2);
+    ctx.lineTo(left + w, y - h / 2);
+    ctx.lineTo(left + w, y + h / 2 - 5);
+    ctx.lineTo(left + w - 5, y + h / 2);
+    ctx.lineTo(left, y + h / 2);
+    ctx.fill();
+    ctx.fillStyle = RED;
+    ctx.fillRect(left, y - h / 2, 3, h);
+    ctx.fillStyle = PAPER;
+    ctx.fillText(text, x + 2, y + 1);
+  }
+
+  // Light card with a coloured state bar, for what an agent is working on.
   function tag(text, x, y, dot) {
     const size = fontPx();
-    const w = ctx.measureText(text).width + size + 16;
+    const w = ctx.measureText(text).width + 18;
     const h = size + 9;
     const left = x - w / 2;
-    ctx.fillStyle = 'rgb(20 16 30 / 0.25)';
-    ctx.beginPath();
-    ctx.roundRect(left + 1, y - h / 2 + 2, w, h, 5);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.roundRect(left, y - h / 2, w, h, 5);
-    ctx.fill();
+    ctx.fillStyle = 'rgb(15 25 35 / 0.3)';
+    ctx.fillRect(left + 1, y - h / 2 + 2, w, h);
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(left, y - h / 2, w, h);
     ctx.fillStyle = dot;
-    ctx.beginPath();
-    ctx.arc(left + 8 + size / 4, y, size / 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#1b2238';
+    ctx.fillRect(left, y - h / 2, 4, h);
+    ctx.fillStyle = INK;
     ctx.textAlign = 'left';
-    ctx.fillText(text, left + 12 + size / 2, y + 0.5);
+    ctx.fillText(text, left + 10, y + 0.5);
     ctx.textAlign = 'center';
   }
 
@@ -719,6 +848,16 @@ export function createOffice(canvas, { onSelect }) {
     update,
     setPrayer(next) {
       schedule = next;
+    },
+    // The server sends its own clock with the meeting, so the lines play right even if this one is off.
+    setMeeting(next) {
+      if (!next) {
+        meeting = null;
+        return;
+      }
+      if (meeting?.id === next.id && (meeting.startAt != null || next.playedAt == null)) return;
+      const startAt = next.playedAt == null ? null : performance.now() + (next.playedAt - next.now);
+      meeting = { ...next, startAt };
     },
     rooms: () => rooms.map(({ id, label }) => ({ id, label })),
     focus(roomId) {

@@ -6,6 +6,7 @@ import { enqueue, holdMeeting, personaPrompt, registerHandler, listTasks } from 
 import { chat, chatJson } from './llm.js';
 import { HttpError, readJson, requireText, safeJoin, sendJson, toId } from './http.js';
 import { checkRunnable, isRunning, logsText, runInfo, startProject, stopProject } from './runner.js';
+import { callMeeting, onDecision } from './meetings.js';
 
 export const PROJECT_DIR = join(WORKSPACE, 'projects');
 
@@ -226,6 +227,7 @@ function toProject(row) {
     hasServer: existsSync(join(root, 'server.js')),
     run: runInfo(row.id),
     failure: lastFailure(row.id),
+    dueAt: db.prepare("SELECT due_at FROM meetings WHERE kind = 'project' AND ref_id = ? ORDER BY id DESC LIMIT 1").get(row.id)?.due_at ?? null,
   };
 }
 
@@ -235,6 +237,22 @@ function lastFailure(projectId) {
     ORDER BY id DESC LIMIT 1`).get(projectId);
   return task?.state === 'failed' ? { taskId: task.id, error: task.error } : null;
 }
+
+function kickoff(projectId) {
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+  if (!project || project.state !== 'proposed') return;
+  const first = STEPS[0];
+  db.prepare("UPDATE projects SET state = 'running' WHERE id = ?").run(projectId);
+  holdMeeting(STEPS.map((s) => s.agent), `Kickoff: ${project.name}`);
+  enqueue(first.agent, 'it.step', `${first.label}: ${project.name}`, { projectId, step: first.id });
+}
+
+onDecision('project', {
+  approve: kickoff,
+  // Nothing was written yet, so a rejected project just goes away.
+  reject: (projectId) => db.prepare("DELETE FROM projects WHERE id = ? AND state = 'proposed'").run(projectId),
+  isDone: (projectId) => db.prepare('SELECT state FROM projects WHERE id = ?').get(projectId)?.state === 'done',
+});
 
 export function registerItRoutes(router) {
   router.get('/api/projects', (req, res) => {
@@ -250,14 +268,20 @@ export function registerItRoutes(router) {
     const brief = requireText(body.brief, 'Brief', 4000);
     const kind = KINDS[body.kind] ? body.kind : 'website';
     const slug = slugify(name);
-    const first = STEPS[0];
-
     const { lastInsertRowid } = db.prepare(
-      'INSERT INTO projects (slug, name, kind, brief, step) VALUES (?, ?, ?, ?, ?)',
-    ).run(slug, name, kind, brief, first.id);
+      "INSERT INTO projects (slug, name, kind, brief, step, state) VALUES (?, ?, ?, ?, ?, 'proposed')",
+    ).run(slug, name, kind, brief, STEPS[0].id);
     const id = Number(lastInsertRowid);
-    holdMeeting(STEPS.map((s) => s.agent), `Kickoff: ${name}`);
-    enqueue(first.agent, 'it.step', `${first.label}: ${name}`, { projectId: id, step: first.id });
+    // Bayu's team argues scope and timeline first; work starts once you ACC the deadline.
+    callMeeting({
+      topic: `Proyek baru: ${name}`,
+      kind: 'project',
+      refId: id,
+      context: `Jenis: ${KINDS[kind]}
+Brief dari owner: ${brief}
+Tim ngerjain berurutan: ${STEPS.map((s) => s.label).join(' → ')}.`,
+      agents: ['bayu', 'nadia', 'tari', 'fajar'],
+    });
     sendJson(res, 201, { id, slug });
   });
 

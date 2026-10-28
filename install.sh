@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Kantor AI installer for a Linux VPS (Debian/Ubuntu).
-#   curl -fsSL https://raw.githubusercontent.com/gerrardoktoviarie-creator/kantor-ai/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/gerrardoktoviarie-creator/Kantor-AI/main/install.sh | bash
 # Re-running it updates the code and keeps .env and workspace/ (your data).
 set -euo pipefail
 
-REPO="${KANTOR_REPO:-gerrardoktoviarie-creator/kantor-ai}"
+REPO="${KANTOR_REPO:-gerrardoktoviarie-creator/Kantor-AI}"
 DIR="${KANTOR_DIR:-$HOME/kantor-ai}"
 PORT="${KANTOR_PORT:-4100}"
 

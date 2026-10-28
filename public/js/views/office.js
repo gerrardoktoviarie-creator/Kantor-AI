@@ -1,10 +1,17 @@
 import { api } from '../api.js';
-import { h, hook, formatRelative } from '../dom.js';
+import { h, hook, formatDateTime, formatRelative, formValues, handleSubmit } from '../dom.js';
 import { avatarCanvas } from '../sprites.js';
 import { createOffice } from '../office-canvas.js';
 import { currentPrayer, nextPrayer } from '../prayer-clock.js';
 
 const clock = new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+// <input type="datetime-local"> wants local time without a zone.
+function toLocalInput(value) {
+  const d = new Date(value);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 const STATE_LABEL = {
   idle: ['Santai', ''],
@@ -35,6 +42,10 @@ export function createOfficeView({ onOffice }) {
   const fullscreenButton = root.querySelector('[data-action="fullscreen"]');
   const banner = hook('prayer-banner');
   const prayerList = hook('prayer-list');
+  const approvalPanel = hook('approval-panel');
+  const approvals = hook('approval-list');
+  const deadlines = hook('deadline-list');
+  let approvalsKey = '';
   let schedule = null;
   let selectedId = null;
   let roomsKey = '';
@@ -80,6 +91,128 @@ export function createOfficeView({ onOffice }) {
     const item = event.target.closest('[data-agent]');
     if (item) showAgent(item.dataset.agent);
   });
+
+  handleSubmit(hook('meeting-form'), hook('meeting-error'), async (values, form) => {
+    await api('/api/meetings', { method: 'POST', body: values });
+    form.reset();
+    await refresh();
+  });
+
+  async function decide(form, action, body) {
+    const id = form.closest('[data-meeting]').dataset.meeting;
+    const buttons = form.querySelectorAll('button');
+    const error = form.querySelector('.error-text');
+    buttons.forEach((b) => { b.disabled = true; });
+    error.textContent = '';
+    try {
+      await api(`/api/meetings/${id}/${action}`, { method: 'POST', body });
+      approvalsKey = '';
+      await refresh();
+    } catch (err) {
+      error.textContent = err.message;
+      buttons.forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  approvals.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const { due, note } = formValues(event.target);
+    decide(event.target, 'approve', { due: due && new Date(due).toISOString(), note });
+  });
+
+  approvals.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-action="reject"]');
+    if (!button || !window.confirm('Tolak usulan ini? Tim gak bakal ngerjain.')) return;
+    decide(button.form, 'reject', { note: button.form.elements.note.value });
+  });
+
+  deadlines.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-action="meeting-done"]');
+    if (!button) return;
+    button.disabled = true;
+    try {
+      await api(`/api/meetings/${button.dataset.id}/done`, { method: 'POST' });
+      await refresh();
+    } catch (err) {
+      window.alert(err.message);
+      button.disabled = false;
+    }
+  });
+
+  function renderApproval(meeting) {
+    const chair = meeting.people[meeting.chair];
+    const head = h('div', { class: 'approval__head' },
+      avatarCanvas(chair.look, 'avatar avatar--small'),
+      h('div', {},
+        h('strong', {}, `${chair.name} · ${chair.role}`),
+        h('p', { class: 'muted' }, meeting.topic),
+      ),
+    );
+    if (meeting.state === 'debating') {
+      const names = meeting.agents.map((id) => meeting.people[id].name).join(', ');
+      return h('article', { class: 'approval', dataset: { meeting: meeting.id } }, head,
+        h('p', { class: 'muted' }, `${names} lagi debat di ruang rapat…`));
+    }
+
+    const { proposal } = meeting;
+    const field = (name) => `${name}-${meeting.id}`;
+    return h('article', { class: 'approval', dataset: { meeting: meeting.id } },
+      head,
+      h('p', { class: 'approval__ask' }, proposal.question),
+      proposal.summary && h('p', {}, proposal.summary),
+      proposal.plan.length > 0 && h('ol', { class: 'approval__plan' }, proposal.plan.map((step) => h('li', {}, step))),
+      meeting.lines.length > 0 && h('details', { class: 'approval__debate' },
+        h('summary', {}, `Isi debatnya (${meeting.lines.length} omongan)`),
+        h('ul', {}, meeting.lines.map((line) => h('li', {},
+          h('strong', {}, `${meeting.people[line.agent]?.name ?? line.agent}: `), line.text))),
+      ),
+      h('form', { class: 'form' },
+        h('div', { class: 'field' },
+          h('label', { for: field('due') }, 'Deadline'),
+          h('input', { id: field('due'), name: 'due', type: 'datetime-local', required: true, min: toLocalInput(Date.now()), value: toLocalInput(proposal.due) }),
+          proposal.reason && h('p', { class: 'panel__hint' }, `Kata ${chair.name}: ${proposal.reason}`),
+        ),
+        h('div', { class: 'field' },
+          h('label', { for: field('note') }, 'Catatan buat tim (boleh kosong)'),
+          h('textarea', { id: field('note'), name: 'note', rows: '2', maxlength: '1000' }),
+        ),
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn btn--primary btn--small', type: 'submit' }, 'ACC'),
+          h('button', { class: 'btn btn--small', type: 'button', dataset: { action: 'reject' } }, 'Tolak'),
+        ),
+        h('p', { class: 'error-text', role: 'alert' }),
+      ),
+    );
+  }
+
+  function renderDeadline(meeting) {
+    const chair = meeting.people[meeting.chair];
+    const late = Date.parse(meeting.dueAt) < Date.now();
+    return h('li', { class: 'deadline' },
+      h('div', { class: 'task__line' },
+        h('strong', {}, meeting.topic),
+        h('span', { class: `badge ${late ? 'badge--error' : 'badge--working'}` }, late ? 'Lewat deadline' : formatRelative(meeting.dueAt)),
+      ),
+      h('span', { class: 'muted' }, `${chair.name} · ${formatDateTime(meeting.dueAt)}`),
+      meeting.kind === 'topic'
+        ? h('button', { class: 'btn btn--small', type: 'button', dataset: { action: 'meeting-done', id: meeting.id } }, 'Udah beres')
+        : h('span', { class: 'panel__hint' }, 'Beres sendiri pas proyeknya jadi.'),
+    );
+  }
+
+  async function renderMeetings() {
+    const data = await api('/api/meetings');
+    deadlines.replaceChildren(...(data.active.length
+      ? data.active.map(renderDeadline)
+      : [h('li', { class: 'muted' }, 'Belum ada yang di-ACC.')]));
+
+    // Re-rendering would wipe a deadline you're halfway through changing.
+    const key = JSON.stringify(data.pending.map((m) => [m.id, m.state]));
+    if (key === approvalsKey || approvals.contains(document.activeElement)) return;
+    approvalsKey = key;
+    approvalPanel.hidden = !data.pending.length;
+    approvals.replaceChildren(...data.pending.map(renderApproval));
+  }
 
   function minutesUntil(iso) {
     const minutes = Math.ceil((new Date(iso).getTime() - Date.now()) / 60_000);
@@ -275,12 +408,14 @@ export function createOfficeView({ onOffice }) {
     office.update(data.divisions, data.builder, data.office);
     schedule = data.prayer;
     office.setPrayer(schedule);
+    office.setMeeting(data.meeting);
     renderPrayer();
     renderFilter(office.rooms());
     const everyone = data.divisions.flatMap((d) => d.agents);
     renderAttention(everyone);
     const working = everyone.filter((a) => a.status.state === 'working').length;
-    stats.textContent = `${everyone.length} agent · ${working} lagi kerja · ${data.queued} tugas di antrean`;
+    stats.textContent = `${everyone.length} agent · ${working} lagi kerja · ${data.queued} tugas di antrean${data.asking ? ` · ${data.asking} minta ACC` : ''}`;
+    await renderMeetings();
   }
 
   return {

@@ -11,6 +11,20 @@ import { fileURLToPath } from 'node:url';
 const WORKING_SERVER = "const http = require('node:http');\nconst port = process.env.PORT || 3000;\nhttp.createServer((req, res) => res.end('halo dari app')).listen(port, () => console.log('Server jalan di port ' + port));";
 
 function fakeAnswer(prompt) {
+  if (prompt.includes('Topik rapat:')) {
+    return JSON.stringify({
+      lines: [
+        { agent: 'bayu', text: 'MVP dulu, fitur lain nyusul.' },
+        { agent: 'ghost', text: 'Aku gak diundang.' },
+        { agent: 'sari', text: 'Kalau tampilannya jelek, gak ada yang mau pakai.' },
+      ],
+      summary: 'Bikin versi kecil dulu.',
+      plan: ['Riset', 'Bangun'],
+      due: '2099-01-01T10:00',
+      reason: 'Biar ada waktu revisi.',
+      question: 'Deadline Jumat sore oke?',
+    });
+  }
   if (prompt.includes('jelasin konten ini ke klien')) return 'Ini video progres lapangan, tayang Senin jam 12.';
   if (prompt.trimEnd().endsWith('Sari:')) return 'Sari: Siap bos, konten Bakri Padel aman.';
   if (prompt.includes('Cari penyebabnya')) {
@@ -109,6 +123,14 @@ async function call(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+// Projects wait for a meeting and your ACC before the team starts.
+async function accProject(id) {
+  const meeting = await until(async () => (await call('/api/meetings')).pending
+    .find((m) => m.kind === 'project' && m.refId === id && m.state === 'asking'), 'rapat proyek');
+  await call(`/api/meetings/${meeting.id}/approve`, { method: 'POST', body: { due: meeting.proposal.due } });
+  return meeting;
+}
+
 async function until(check, label, timeout = 15_000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
@@ -169,6 +191,11 @@ test('client revision sends the content back to Sari', async () => {
 
 test('IT pipeline runs every step and writes files', async () => {
   const { id, slug } = await call('/api/projects', { method: 'POST', body: { name: 'Booking Padel', kind: 'app', brief: 'app booking lapangan' } });
+  assert.equal((await call('/api/projects')).projects.find((p) => p.id === id).state, 'proposed');
+  const meeting = await accProject(id);
+  assert.deepEqual(meeting.agents, ['bayu', 'nadia', 'tari', 'fajar']);
+  assert.ok(meeting.lines.every((l) => meeting.agents.includes(l.agent)), 'cuma peserta rapat yang ngomong');
+  assert.equal(meeting.proposal.question, 'Deadline Jumat sore oke?');
   const done = await until(async () => (await call('/api/projects')).projects.find((p) => p.id === id && p.state === 'done'), 'pipeline IT', 20_000);
   assert.equal(done.previewUrl, `/preview/${slug}/`);
   assert.ok(existsSync(join(workspace, 'projects', slug, 'docs', 'catatan.md')));
@@ -179,6 +206,33 @@ test('IT pipeline runs every step and writes files', async () => {
 
   const owners = (await call('/api/tasks')).filter((t) => t.kind === 'it.step' && t.payload.projectId === id).map((t) => t.agentId);
   assert.deepEqual(owners.sort(), ['bayu', 'fajar', 'joko', 'nadia', 'rani', 'tari']);
+  assert.ok(done.dueAt, 'deadline yang di-ACC ikut kesimpan di proyek');
+});
+
+test('a rejected project never starts', async () => {
+  const { id } = await call('/api/projects', { method: 'POST', body: { name: 'Gak Jadi', kind: 'website', brief: 'tes tolak' } });
+  const meeting = await until(async () => (await call('/api/meetings')).pending.find((m) => m.refId === id && m.state === 'asking'), 'rapat');
+  await call(`/api/meetings/${meeting.id}/reject`, { method: 'POST', body: { note: 'nanti aja' } });
+  assert.equal((await call('/api/projects')).projects.find((p) => p.id === id), undefined);
+  assert.ok(!(await call('/api/tasks')).some((t) => t.kind === 'it.step' && t.payload.projectId === id));
+  await assert.rejects(call(`/api/meetings/${meeting.id}/approve`, { method: 'POST', body: { due: meeting.proposal.due } }), /409/);
+});
+
+test('a topic meeting asks for a deadline, then tracks it until done', async () => {
+  const { id } = await call('/api/meetings', { method: 'POST', body: { topic: 'Promo 11.11: diskon atau gratis ongkir?' } });
+  const meeting = await until(async () => (await call('/api/meetings')).pending.find((m) => m.id === id && m.state === 'asking'), 'debat');
+  assert.deepEqual(meeting.agents, ['sari', 'bayu', 'mira']);
+  assert.equal(meeting.chair, 'sari');
+
+  await assert.rejects(call(`/api/meetings/${id}/approve`, { method: 'POST', body: { due: '2020-01-01T00:00:00Z' } }), /udah lewat/);
+  const due = new Date(Date.now() + 2 * 86_400_000).toISOString();
+  await call(`/api/meetings/${id}/approve`, { method: 'POST', body: { due, note: 'gas' } });
+  const { active, pending } = await call('/api/meetings');
+  assert.ok(!pending.some((m) => m.id === id));
+  assert.equal(active.find((m) => m.id === id).dueAt, due);
+
+  await call(`/api/meetings/${id}/done`, { method: 'POST' });
+  assert.ok(!(await call('/api/meetings')).active.some((m) => m.id === id));
 });
 
 test('ideas come back from Nadia', async () => {
@@ -204,6 +258,7 @@ test('chatting with an agent keeps history and context', async () => {
 
 test('a crashing project shows its logs, Bayu fixes it, then it runs', async () => {
   const { id } = await call('/api/projects', { method: 'POST', body: { name: 'App Crash', kind: 'app', brief: 'tes runner' } });
+  await accProject(id);
   const project = await until(async () => (await call('/api/projects')).projects.find((p) => p.id === id && p.state === 'done'), 'pipeline', 20_000);
   assert.equal(project.hasServer, true);
 

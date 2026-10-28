@@ -1,9 +1,9 @@
 # Kantor AI installer for Windows 10/11. In PowerShell:
-#   irm https://raw.githubusercontent.com/gerrardoktoviarie-creator/kantor-ai/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/gerrardoktoviarie-creator/Kantor-AI/main/install.ps1 | iex
 # Re-running it updates the code and keeps .env, workspace\ (your data) and bin\.
 $ErrorActionPreference = 'Stop'
 
-$Repo = if ($env:KANTOR_REPO) { $env:KANTOR_REPO } else { 'gerrardoktoviarie-creator/kantor-ai' }
+$Repo = if ($env:KANTOR_REPO) { $env:KANTOR_REPO } else { 'gerrardoktoviarie-creator/Kantor-AI' }
 $Dir = if ($env:KANTOR_DIR) { $env:KANTOR_DIR } else { Join-Path $HOME 'kantor-ai' }
 $Port = 4100
 

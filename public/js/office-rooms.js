@@ -49,7 +49,7 @@ export function themeFor(id, style = 'modern') {
 const DESK_SLOTS = [[1, 1], [3, 1], [5, 1], [1, 3], [3, 3], [5, 3]];
 
 export const emptySpots = () => ({
-  coffee: [], sofa: [], chat: [], meeting: [], chill: [], lounger: [], swim: [],
+  coffee: [], sofa: [], chat: [], meeting: [], debate: [], chill: [], lounger: [], swim: [],
   saf: [], wudhu: [], imam: [], mimbar: [],
 });
 
@@ -92,6 +92,9 @@ export function furnishRoom(room, agents) {
       add('sofa', x + 1, y + 5.2, { w: 2, d: 0.75, color: 'leather' }, false);
       spots.sofa.push({ x: x + 1, y: y + 5 }, { x: x + 2, y: y + 5 });
       add('chandelier', x + 4, y + 4, {}, false);
+      // Open floor by the reception: lobby debates, and meetings when there's no meeting room.
+      // Spread over different screen columns so nobody stands behind someone else or the plant.
+      spots.debate.push({ x: x + 4, y: y + 3 }, { x: x + 6, y: y + 3 }, { x: x + 5, y: y + 5 }, { x: x + 3, y: y + 4 });
       plant(x + 7, y);
       plant(x + 7, y + 6);
       plant(x, y);

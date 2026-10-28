@@ -218,6 +218,13 @@ export function retryTask(id) {
   return result.changes > 0;
 }
 
+// Clears the agent's own status (never an overlay on top of it) while it still matches,
+// e.g. once you have answered what they were asking.
+export function clearStatusIf(agentId, matches) {
+  const current = status.get(agentId);
+  if (current && matches(current)) status.set(agentId, { state: 'idle', text: '', at: Date.now() });
+}
+
 export function clearAgentAttention(agentId) {
   const current = getStatus(agentId).state;
   if (current === 'waiting' || current === 'error') setStatus(agentId, 'idle', '');

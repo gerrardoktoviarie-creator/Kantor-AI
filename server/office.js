@@ -2,6 +2,7 @@ import { db, getSetting, setSetting } from './db.js';
 import { DIVISIONS, BUILDER, enabledDivisions, getStatus, listTasks, clearAgentAttention, getAgent, retryTask } from './agents.js';
 import { checkHealth } from './llm.js';
 import { todaySchedule } from './prayer.js';
+import { liveMeeting } from './meetings.js';
 import { HttpError, readJson, requireText, sendJson, toId } from './http.js';
 
 const STYLES = ['modern', 'hangat', 'mewah'];
@@ -66,12 +67,15 @@ export function registerOfficeRoutes(router) {
       agents: division.agents.map((agent) => ({ ...agent, status: getStatus(agent.id) })),
     }));
     const queued = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE state IN ('queued', 'running')").get().n;
+    const asking = db.prepare("SELECT COUNT(*) AS n FROM meetings WHERE state = 'asking'").get().n;
 
     sendJson(res, 200, {
       business: getSetting('business', {}),
       builder: { ...BUILDER, status: getStatus(BUILDER.id) },
       divisions,
       queued,
+      asking,
+      meeting: liveMeeting(),
       office: officeLook(),
       prayer: todaySchedule(),
       health: await checkHealth(),

@@ -14,6 +14,8 @@ const { prayerTimes, todaySchedule } = await import('../server/prayer.js');
 const { parseNumber, summarizeAds } = await import('../server/marketing.js');
 const { restockSuggestion, recordMove } = await import('../server/stock.js');
 const { db, setSetting } = await import('../server/db.js');
+const { normalizeDebate, parseLocal, defaultDue, checkDeadlines } = await import('../server/meetings.js');
+const { getStatus } = await import('../server/agents.js');
 
 test('splitMessage keeps every Telegram message under the limit without splitting a task', () => {
   const blocks = Array.from({ length: 13 }, (_, i) => `• Tugas ${i}\n  ${'x'.repeat(600)}`);
@@ -224,4 +226,47 @@ test('parseEnv reads Hermes .env lines and ignores comments', async () => {
   assert.equal(env.TELEGRAM_BOT_TOKEN, '123:abc');
   assert.equal(env.TELEGRAM_ALLOWED_USERS, '42, 43');
   assert.equal(Object.keys(env).length, 2);
+});
+
+test('parseLocal reads office time and defaultDue lands three days later at 17:00', () => {
+  assert.equal(new Date(parseLocal('2026-11-01T09:30', 7)).toISOString(), '2026-11-01T02:30:00.000Z');
+  assert.equal(new Date(parseLocal('2026-11-01', 7)).toISOString(), '2026-11-01T10:00:00.000Z');
+  assert.equal(parseLocal('besok sore'), null);
+  assert.equal(new Date(defaultDue(Date.parse('2026-10-28T20:00:00Z'), 7)).toISOString(), '2026-11-01T10:00:00.000Z');
+});
+
+test('normalizeDebate keeps only participants and replaces a deadline in the past', () => {
+  const now = Date.parse('2026-10-28T03:00:00Z');
+  const { lines, proposal } = normalizeDebate({
+    lines: [{ agent: 'bayu', text: '  MVP   dulu ' }, { agent: 'orang-lain', text: 'halo' }, { agent: 'nadia', text: 'x'.repeat(300) }, { agent: 'nadia' }],
+    plan: ['Riset', '', 5],
+    due: '2026-10-01T10:00',
+  }, { agents: ['bayu', 'nadia'], chair: 'bayu' }, now);
+  assert.deepEqual(lines.map((l) => l.agent), ['bayu', 'nadia']);
+  assert.equal(lines[0].text, 'MVP dulu');
+  assert.ok(lines[1].text.length <= 120);
+  assert.deepEqual(proposal.plan, ['Riset']);
+  assert.equal(proposal.due, new Date(defaultDue(now)).toISOString());
+  assert.match(proposal.question, /ACC/);
+
+  const fine = normalizeDebate({ due: '2026-10-30T15:00' }, { agents: ['bayu'], chair: 'bayu' }, now);
+  assert.equal(fine.proposal.due, '2026-10-30T08:00:00.000Z');
+});
+
+test('checkDeadlines warns the chair a day before and once more when it is late', async () => {
+  const now = Date.parse('2026-10-28T03:00:00Z');
+  const due = new Date(now + 5 * 3_600_000).toISOString();
+  const { lastInsertRowid } = db.prepare(`INSERT INTO meetings (topic, agents, chair, state, due_at)
+    VALUES ('Promo', '["raka","wulan"]', 'raka', 'approved', ?)`).run(due);
+  const reminded = () => db.prepare('SELECT reminded FROM meetings WHERE id = ?').get(lastInsertRowid).reminded;
+
+  await checkDeadlines(now - 2 * 86_400_000);
+  assert.equal(reminded(), '');
+  await checkDeadlines(now);
+  await checkDeadlines(now + 60_000);
+  assert.equal(reminded(), 'h24');
+  assert.equal(getStatus('raka').text, 'Deadline besok: Promo');
+
+  await checkDeadlines(now + 6 * 3_600_000);
+  assert.equal(reminded(), 'h24,late');
 });

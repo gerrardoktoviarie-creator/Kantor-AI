@@ -7,7 +7,8 @@
   <meta name="description" content="Kantor virtual berisi agent AI per divisi.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Silkscreen&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/style.css">
   <script src="/js/theme.js"></script>
   <script type="module" src="/js/main.js"></script>
@@ -29,7 +30,7 @@
       <a class="nav__link" href="#pemakaian">Pemakaian AI</a>
     </nav>
     <p class="health" data-hook="health"><span class="dot"></span><span>Ngecek 9router…</span></p>
-    <button class="btn btn--small" type="button" data-action="toggle-theme">Mode terang</button>
+    <button class="btn btn--small topbar__theme" type="button" data-action="toggle-theme">Mode terang</button>
   </header>
 
   <main class="page">
@@ -130,19 +131,33 @@
         </div>
         <aside class="office__panel" id="office-panel" data-hook="office-panel" aria-label="Panel kantor">
           <button class="btn btn--small office__close" type="button" data-action="close-panel">Tutup</button>
+          <section class="panel" aria-labelledby="approval-title" data-hook="approval-panel" hidden>
+            <h2 id="approval-title">Minta ACC kamu</h2>
+            <div class="approvals" data-hook="approval-list"></div>
+          </section>
           <section class="panel" aria-labelledby="attention-title">
             <h2 id="attention-title">Nunggu kamu cek</h2>
             <ul class="list" data-hook="attention-list"></ul>
           </section>
           <section class="panel" data-hook="agent-card" aria-live="polite" hidden></section>
+          <section class="panel" aria-labelledby="meeting-title">
+            <h2 id="meeting-title">Rapat</h2>
+            <form class="form" data-hook="meeting-form">
+              <div class="field">
+                <label for="meeting-topic">Mau tim debatin apa?</label>
+                <textarea id="meeting-topic" name="topic" rows="2" maxlength="500" required placeholder="Contoh: promo 11.11 mending diskon 20% atau gratis ongkir?"></textarea>
+              </div>
+              <p class="panel__hint">Manajer tiap divisi debat di ruang rapat, terus minta ACC dan nanya deadline ke kamu.</p>
+              <button class="btn btn--small" type="submit">Mulai rapat</button>
+              <p class="error-text" data-hook="meeting-error" role="alert"></p>
+            </form>
+            <h3>Deadline yang udah di-ACC</h3>
+            <ul class="list" data-hook="deadline-list"></ul>
+          </section>
           <section class="panel" aria-labelledby="prayer-title">
             <h2 id="prayer-title" data-hook="prayer-title">Jadwal salat</h2>
             <ol class="prayer-list" data-hook="prayer-list"></ol>
           </section>
-        </aside>
-      </div>
-    </section>
-          <section class="panel" data-hook="agent-card" aria-live="polite" hidden></section>
         </aside>
       </div>
     </section>
@@ -256,8 +271,9 @@
               <label for="project-brief">Mau bikin apa? Jelasin sedetail mungkin</label>
               <textarea id="project-brief" name="brief" maxlength="4000" required></textarea>
             </div>
+            <p class="panel__hint">Tim rapat dulu soal cakupan dan waktunya, terus Bayu minta ACC dan deadline dari kamu di Kantor.</p>
             <p class="error-text" data-hook="project-error" role="alert"></p>
-            <button class="btn btn--primary" type="submit">Mulai kerjain</button>
+            <button class="btn btn--primary" type="submit">Rapatin sama tim</button>
           </form>
         </section>
         <section class="panel" aria-labelledby="idea-title">

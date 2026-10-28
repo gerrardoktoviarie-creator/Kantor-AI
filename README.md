@@ -27,7 +27,7 @@ Butuh AI yang kompatibel OpenAI, misalnya [9router](https://www.npmjs.com/packag
 **Windows 10/11**, buka PowerShell, tempel:
 
 ```
-irm https://raw.githubusercontent.com/gerrardoktoviarie-creator/kantor-ai/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/gerrardoktoviarie-creator/Kantor-AI/main/install.ps1 | iex
 ```
 
 Node.js dipasang lewat winget kalau belum ada, Kantor AI ditaruh di `%USERPROFILE%\kantor-ai`, nyala sendiri tiap laptop hidup, dan browser langsung kebuka ke wizard.
@@ -35,7 +35,7 @@ Node.js dipasang lewat winget kalau belum ada, Kantor AI ditaruh di `%USERPROFIL
 **VPS Linux (Debian/Ubuntu)**, login SSH, tempel:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/gerrardoktoviarie-creator/kantor-ai/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/gerrardoktoviarie-creator/Kantor-AI/main/install.sh | bash
 ```
 
 Installer masang Node.js 22, ffmpeg, dan service systemd, bikin password acak, terus nampilin alamat dan password buat login. Jalanin perintah yang sama lagi buat update; `.env` dan data di `workspace/` gak disentuh.
@@ -53,7 +53,7 @@ Habis itu ganti `PUBLIC_URL=https://kantor.domainmu.com` di `.env`, tutup port 4
 **Manual** (semua OS): butuh Node.js 22.13+.
 
 ```
-git clone https://github.com/gerrardoktoviarie-creator/kantor-ai.git
+git clone https://github.com/gerrardoktoviarie-creator/Kantor-AI.git kantor-ai
 cd kantor-ai
 cp .env.example .env    # isi LLM_URL dan LLM_KEY
 npm start

@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { h, hook, handleSubmit, formatRelative } from '../dom.js';
+import { h, hook, handleSubmit, formatDateTime, formatRelative } from '../dom.js';
 
 export function createItView() {
   const projectForm = hook('project-form');
@@ -86,15 +86,24 @@ export function createItView() {
     }));
   }
 
+  function projectBadge(project) {
+    if (project.state === 'proposed') return h('span', { class: 'badge badge--attention' }, 'Nunggu ACC kamu');
+    if (project.state === 'done') return h('span', { class: 'badge badge--attention' }, 'Siap kamu cek');
+    return h('span', { class: 'badge badge--working' }, 'Lagi dikerjain');
+  }
+
   function renderProject(project) {
     const done = project.state === 'done';
     return h('li', { class: 'content-card', dataset: { id: String(project.id) } },
       h('div', { class: 'content-card__head' },
         h('h2', { class: 'content-card__title' }, project.name),
         h('span', { class: 'badge' }, project.kind === 'app' ? 'Web app' : 'Website'),
-        h('span', { class: `badge ${done ? 'badge--attention' : 'badge--working'}` }, done ? 'Siap kamu cek' : 'Lagi dikerjain'),
+        projectBadge(project),
       ),
-      renderSteps(project),
+      project.state === 'proposed'
+        ? h('p', { class: 'note' }, 'Bayu, Nadia, Tari, sama Fajar lagi rapatin proyek ini. Abis itu Bayu nanya deadline dan minta ACC kamu di ', h('a', { href: '#kantor' }, 'Kantor'), '.')
+        : renderSteps(project),
+      project.dueAt && h('p', { class: 'muted' }, `Deadline: ${formatDateTime(project.dueAt)} (${formatRelative(project.dueAt)})`),
       h('p', { class: 'muted' }, project.brief),
       project.files.length > 0 && h('div', { class: 'form' },
         h('h3', {}, `File (${project.files.length})`),
