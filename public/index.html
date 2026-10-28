@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kantor AI</title>
+  <meta name="description" content="Kantor virtual berisi agent AI per divisi.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Silkscreen&display=swap">
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand__name">Kantor AI</span>
+      <span class="brand__business" data-hook="business-name"></span>
+    </div>
+    <nav class="nav" aria-label="Menu utama" data-hook="nav" hidden>
+      <a class="nav__link" href="#kantor">Kantor<span class="nav__badge" data-hook="attention-count" hidden></span></a>
+      <a class="nav__link" href="#konten" data-division="sosmed">Konten</a>
+      <a class="nav__link" href="#klip" data-division="sosmed">Klip video</a>
+      <a class="nav__link" href="#it" data-division="it">IT &amp; Programmer</a>
+      <a class="nav__link" href="#tugas" data-division="tugas">Tugas</a>
+      <a class="nav__link" href="#iklan" data-division="marketing">Iklan</a>
+      <a class="nav__link" href="#stok" data-division="admin">Stok</a>
+      <a class="nav__link" href="#pemakaian">Pemakaian AI</a>
+    </nav>
+    <p class="health" data-hook="health"><span class="dot"></span><span>Ngecek 9router…</span></p>
+    <button class="btn btn--small" type="button" data-action="toggle-theme">Mode terang</button>
+  </header>
+
+  <main class="page">
+    <section class="view setup" data-view="setup" aria-labelledby="setup-title" hidden>
+      <div class="setup__top">
+        <p class="setup__brand">Kantor AI</p>
+        <div class="steps-bar" data-hook="setup-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+        <p class="progress" data-hook="setup-progress"></p>
+      </div>
+
+      <div class="builder">
+        <canvas class="builder__avatar" width="32" height="64" data-hook="builder-avatar" aria-hidden="true"></canvas>
+        <div class="bubble">
+          <p class="bubble__who">Builder</p>
+          <p data-hook="builder-line"></p>
+        </div>
+      </div>
+
+      <form class="setup__form" data-hook="setup-form" novalidate>
+        <div class="setup__step" data-step="1">
+          <h1 id="setup-title" data-hook="setup-heading">Pasang kantor AI lu</h1>
+          <ul class="setup__points">
+            <li>Gak perlu ngoding. Pilih, centang, beres.</li>
+            <li>Data bisnis diisi sekali di sini. Semua agent pakai ini buat konteks.</li>
+            <li>Pemasangan gak makan kuota AI sama sekali.</li>
+          </ul>
+          <div class="panel form">
+            <div class="field">
+              <label for="setup-name">Nama bisnis / brand lu apa?</label>
+              <input id="setup-name" name="name" autocomplete="organization" maxlength="120" required>
+            </div>
+            <div class="field">
+              <label for="setup-about">Bisnisnya ngapain? Jual apa, harganya kira-kira berapa?</label>
+              <textarea id="setup-about" name="about" maxlength="2000" required></textarea>
+            </div>
+            <div class="field">
+              <label for="setup-audience">Target pasarnya siapa, dan gaya bahasanya mau gimana?</label>
+              <textarea id="setup-audience" name="audience" maxlength="1000" required></textarea>
+            </div>
+          </div>
+        </div>
+
+        <fieldset class="setup__step" data-step="2" hidden>
+          <legend class="setup__legend">Mau mulai sama tim yang mana?</legend>
+          <div class="team-grid" data-hook="team-options"></div>
+        </fieldset>
+
+        <div class="setup__step" data-step="3" hidden>
+          <h2 class="setup__legend">Kantor lu mau keliatan kayak apa?</h2>
+          <div class="setup__look">
+            <div class="setup__choices">
+              <fieldset class="field">
+                <legend>Gaya kantor</legend>
+                <div class="style-options" data-hook="style-options"></div>
+              </fieldset>
+              <fieldset class="field">
+                <legend>Fasilitas</legend>
+                <div class="facility-options" data-hook="facility-options"></div>
+              </fieldset>
+            </div>
+            <div class="setup__preview">
+              <canvas class="setup__canvas" data-hook="setup-preview" aria-label="Preview kantor sesuai pilihan"></canvas>
+              <p class="panel__hint">Preview langsung. Agent-nya udah jalan-jalan.</p>
+            </div>
+          </div>
+        </div>
+
+        <p class="error-text" data-hook="setup-error" role="alert"></p>
+        <div class="actions setup__actions">
+          <button class="btn" type="button" data-action="setup-back">Balik</button>
+          <a class="btn" href="#kantor" data-hook="setup-cancel" hidden>Batal</a>
+          <button class="btn btn--primary" type="submit" data-hook="setup-next">Mulai</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="view view--office" data-view="kantor" aria-labelledby="kantor-title" hidden>
+      <h1 class="visually-hidden" id="kantor-title">Kantor live</h1>
+      <div class="office" data-hook="office">
+        <div class="office__stage">
+          <canvas class="office__canvas" data-hook="office-canvas" aria-label="Denah kantor dengan posisi tiap agent. Klik agent buat lihat lagi ngapain."></canvas>
+          <div class="office__hud office__hud--top">
+            <div class="chips" data-hook="room-filter" role="group" aria-label="Filter ruangan"></div>
+            <div class="office__tools">
+              <button class="btn btn--small office__panel-toggle" type="button" data-action="toggle-panel" aria-controls="office-panel" aria-expanded="false">
+                Panel<span class="nav__badge" data-hook="panel-count" hidden></span>
+              </button>
+              <button class="btn btn--small" type="button" data-action="zoom-out" aria-label="Perkecil">−</button>
+              <button class="btn btn--small" type="button" data-action="zoom-in" aria-label="Perbesar">+</button>
+              <a class="btn btn--small" href="#atur">Atur kantor</a>
+              <button class="btn btn--small" type="button" data-action="fullscreen">Layar penuh</button>
+            </div>
+          </div>
+          <div class="office__hud office__hud--bottom">
+            <p class="office__stats" data-hook="office-stats"></p>
+            <p class="prayer-banner" data-hook="prayer-banner" aria-live="polite"></p>
+          </div>
+        </div>
+        <aside class="office__panel" id="office-panel" data-hook="office-panel" aria-label="Panel kantor">
+          <button class="btn btn--small office__close" type="button" data-action="close-panel">Tutup</button>
+          <section class="panel" aria-labelledby="attention-title">
+            <h2 id="attention-title">Nunggu kamu cek</h2>
+            <ul class="list" data-hook="attention-list"></ul>
+          </section>
+          <section class="panel" data-hook="agent-card" aria-live="polite" hidden></section>
+          <section class="panel" aria-labelledby="prayer-title">
+            <h2 id="prayer-title" data-hook="prayer-title">Jadwal salat</h2>
+            <ol class="prayer-list" data-hook="prayer-list"></ol>
+          </section>
+        </aside>
+      </div>
+    </section>
+          <section class="panel" data-hook="agent-card" aria-live="polite" hidden></section>
+        </aside>
+      </div>
+    </section>
+
+    <section class="view" data-view="konten" aria-labelledby="konten-title" hidden>
+      <div class="view__head">
+        <h1 id="konten-title">Konten sosmed</h1>
+        <p>Sari nulis naskah, kamu cek, Ale yang jelasin ke klien.</p>
+      </div>
+
+      <div class="grid-2">
+        <section class="panel" aria-labelledby="client-title">
+          <h2 id="client-title">Klien</h2>
+          <form class="form" data-hook="client-form">
+            <div class="field">
+              <label for="client-name">Nama klien</label>
+              <input id="client-name" name="name" maxlength="120" required>
+            </div>
+            <div class="field">
+              <label for="client-about">Tentang klien (bisnisnya, ciri khas)</label>
+              <textarea id="client-about" name="about" maxlength="2000"></textarea>
+            </div>
+            <button class="btn" type="submit">Tambah klien</button>
+          </form>
+          <div data-hook="client-list"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="new-content-title">
+          <h2 id="new-content-title">Bikin konten baru</h2>
+          <form class="form" data-hook="content-form">
+            <div class="field">
+              <label for="content-client">Untuk klien</label>
+              <select id="content-client" name="clientId" required></select>
+            </div>
+            <div class="field field--row">
+              <div class="field">
+                <label for="content-format">Format</label>
+                <select id="content-format" name="format">
+                  <option value="reels">Reels / video pendek</option>
+                  <option value="single">Single image</option>
+                  <option value="carousel">Carousel</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="content-schedule">Jadwal tayang</label>
+                <input id="content-schedule" name="scheduleAt" type="datetime-local">
+              </div>
+            </div>
+            <div class="field">
+              <label for="content-brief">Brief</label>
+              <textarea id="content-brief" name="brief" maxlength="3000" required placeholder="Contoh: progres pembangunan lapangan padel di Gorontalo, tunjukin sebelum-sesudah"></textarea>
+            </div>
+            <p class="error-text" data-hook="content-error" role="alert"></p>
+            <button class="btn btn--primary" type="submit">Kasih ke Sari</button>
+          </form>
+        </section>
+      </div>
+
+      <div class="chips" data-hook="content-filter" role="group" aria-label="Filter konten">
+        <button class="chip chip--active" type="button" data-filter="all">Semua</button>
+        <button class="chip" type="button" data-filter="internal">Perlu dicek</button>
+        <button class="chip" type="button" data-filter="client">Di klien</button>
+        <button class="chip" type="button" data-filter="approved">Disetujui</button>
+      </div>
+      <ul class="list" data-hook="content-list"></ul>
+    </section>
+
+    <section class="view" data-view="klip" aria-labelledby="klip-title" hidden>
+      <div class="view__head">
+        <h1 id="klip-title">Klip video</h1>
+        <p>Upload video panjang, Dimas cariin bagian yang padat omongan, kamu pilih dan potong.</p>
+      </div>
+      <section class="panel" aria-labelledby="upload-title">
+        <h2 id="upload-title">Upload video</h2>
+        <form class="form" data-hook="upload-form">
+          <div class="field">
+            <label for="upload-file">File video (mp4, mov, mkv, webm)</label>
+            <input id="upload-file" name="file" type="file" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mkv" required>
+          </div>
+          <progress class="upload-progress" data-hook="upload-progress" max="100" value="0" hidden></progress>
+          <p class="error-text" data-hook="upload-error" role="alert"></p>
+          <button class="btn btn--primary" type="submit">Upload &amp; kasih ke Dimas</button>
+        </form>
+      </section>
+      <ul class="list" data-hook="video-list"></ul>
+    </section>
+
+    <section class="view" data-view="it" aria-labelledby="it-title" hidden>
+      <div class="view__head">
+        <h1 id="it-title">IT &amp; Programmer</h1>
+        <p>Nadia riset, Tari desain, Joko database, Fajar backend, Rani frontend, Bayu review.</p>
+      </div>
+      <div class="grid-2">
+        <section class="panel" aria-labelledby="project-form-title">
+          <h2 id="project-form-title">Proyek baru</h2>
+          <form class="form" data-hook="project-form">
+            <div class="field field--row">
+              <div class="field">
+                <label for="project-name">Nama proyek</label>
+                <input id="project-name" name="name" maxlength="80" required>
+              </div>
+              <div class="field">
+                <label for="project-kind">Jenis</label>
+                <select id="project-kind" name="kind">
+                  <option value="website">Website</option>
+                  <option value="app">Web app (ada login/data)</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="project-brief">Mau bikin apa? Jelasin sedetail mungkin</label>
+              <textarea id="project-brief" name="brief" maxlength="4000" required></textarea>
+            </div>
+            <p class="error-text" data-hook="project-error" role="alert"></p>
+            <button class="btn btn--primary" type="submit">Mulai kerjain</button>
+          </form>
+        </section>
+        <section class="panel" aria-labelledby="idea-title">
+          <h2 id="idea-title">Riset ide baru</h2>
+          <form class="form" data-hook="idea-form">
+            <div class="field">
+              <label for="idea-topic">Topik</label>
+              <input id="idea-topic" name="topic" maxlength="500" required placeholder="Contoh: fitur baru buat aplikasi booking lapangan">
+            </div>
+            <button class="btn" type="submit">Suruh Nadia riset</button>
+          </form>
+          <ul class="list" data-hook="idea-list"></ul>
+        </section>
+      </div>
+      <ul class="list" data-hook="project-list"></ul>
+    </section>
+
+    <section class="view" data-view="tugas" aria-labelledby="tugas-title" hidden>
+      <div class="view__head">
+        <h1 id="tugas-title">Tugas dari Classroom</h1>
+        <p data-hook="classroom-status"></p>
+      </div>
+      <section class="panel" data-hook="classroom-setup" hidden></section>
+      <section class="panel" aria-labelledby="telegram-title">
+        <h2 id="telegram-title">Pengingat ke Telegram</h2>
+        <div class="form" data-hook="telegram-panel"></div>
+      </section>
+      <div class="actions" data-hook="classroom-actions" hidden>
+        <button class="btn btn--primary" type="button" data-action="classroom-sync">Cek tugas baru sekarang</button>
+        <button class="btn btn--small btn--danger" type="button" data-action="classroom-disconnect">Putuskan Google</button>
+      </div>
+      <ul class="list" data-hook="homework-list"></ul>
+    </section>
+
+    <section class="view" data-view="iklan" aria-labelledby="iklan-title" hidden>
+      <div class="view__head">
+        <h1 id="iklan-title">Marketing iklan</h1>
+        <p>Raka baca laporan iklanmu, Wulan cariin target audiens buat dites.</p>
+      </div>
+      <div class="grid-2">
+        <section class="panel" aria-labelledby="ads-form-title">
+          <h2 id="ads-form-title">Laporan dari CSV iklan</h2>
+          <form class="form" data-hook="ads-form">
+            <div class="field">
+              <label for="ads-name">Nama laporan</label>
+              <input id="ads-name" name="name" maxlength="120" required placeholder="Contoh: Iklan Oktober minggu 4">
+            </div>
+            <div class="field">
+              <label for="ads-file">File CSV ekspor Meta Ads atau TikTok Ads</label>
+              <input id="ads-file" name="file" type="file" accept=".csv,text/csv" required>
+            </div>
+            <p class="panel__hint">Di Ads Manager: Laporan, Ekspor, pilih CSV. Yang dibaca: nama iklan, biaya, impresi, klik, dan hasil.</p>
+            <p class="error-text" data-hook="ads-error" role="alert"></p>
+            <button class="btn btn--primary" type="submit">Kasih ke Raka</button>
+          </form>
+        </section>
+        <section class="panel" aria-labelledby="audience-form-title">
+          <h2 id="audience-form-title">Ide target audiens</h2>
+          <form class="form" data-hook="audience-form">
+            <div class="field">
+              <label for="audience-product">Produk atau layanan yang mau diiklanin</label>
+              <textarea id="audience-product" name="product" maxlength="1000" required placeholder="Contoh: sewa lapangan padel di Gorontalo, Rp150 ribu per jam"></textarea>
+            </div>
+            <div class="field field--row">
+              <div class="field">
+                <label for="audience-goal">Tujuan iklan</label>
+                <select id="audience-goal" name="goal">
+                  <option>Penjualan</option>
+                  <option>Chat WhatsApp</option>
+                  <option>Datang ke toko</option>
+                  <option>Nambah followers</option>
+                  <option>Kenalin brand</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="audience-budget">Budget per hari (Rp, opsional)</label>
+                <input id="audience-budget" name="budget" type="number" min="0" step="1000" inputmode="numeric">
+              </div>
+            </div>
+            <p class="error-text" data-hook="audience-error" role="alert"></p>
+            <button class="btn btn--primary" type="submit">Kasih ke Wulan</button>
+          </form>
+        </section>
+      </div>
+      <h2>Laporan iklan</h2>
+      <ul class="list" data-hook="ads-list"></ul>
+      <h2>Ide audiens</h2>
+      <ul class="list" data-hook="audience-list"></ul>
+    </section>
+
+    <section class="view" data-view="stok" aria-labelledby="stok-title" hidden>
+      <div class="view__head">
+        <h1 id="stok-title">Admin &amp; stok</h1>
+        <p>Dewi jaga stok dan ngabarin kalau tipis, Rudi bikin rekap tiap Senin.</p>
+      </div>
+      <div class="grid-2">
+        <section class="panel" aria-labelledby="product-form-title">
+          <h2 id="product-form-title">Barang baru</h2>
+          <form class="form" data-hook="product-form">
+            <div class="field field--row">
+              <div class="field">
+                <label for="product-name">Nama barang</label>
+                <input id="product-name" name="name" maxlength="120" required>
+              </div>
+              <div class="field">
+                <label for="product-unit">Satuan</label>
+                <input id="product-unit" name="unit" maxlength="20" placeholder="pcs, kg, botol">
+              </div>
+            </div>
+            <div class="field field--row">
+              <div class="field">
+                <label for="product-stock">Stok sekarang</label>
+                <input id="product-stock" name="stock" type="number" min="0" step="any" inputmode="decimal" value="0">
+              </div>
+              <div class="field">
+                <label for="product-min">Stok minimum</label>
+                <input id="product-min" name="minStock" type="number" min="0" step="any" inputmode="decimal" value="0">
+              </div>
+              <div class="field">
+                <label for="product-price">Harga jual (Rp)</label>
+                <input id="product-price" name="price" type="number" min="0" step="100" inputmode="numeric">
+              </div>
+            </div>
+            <p class="error-text" data-hook="product-error" role="alert"></p>
+            <button class="btn btn--primary" type="submit">Tambah barang</button>
+          </form>
+        </section>
+        <section class="panel" aria-labelledby="move-form-title">
+          <h2 id="move-form-title">Barang masuk atau keluar</h2>
+          <form class="form" data-hook="move-form">
+            <div class="field">
+              <label for="move-product">Barang</label>
+              <select id="move-product" name="productId" data-hook="move-product" required></select>
+            </div>
+            <div class="field field--row">
+              <div class="field">
+                <label for="move-direction">Jenis</label>
+                <select id="move-direction" name="direction">
+                  <option value="out">Keluar (terjual/terpakai)</option>
+                  <option value="in">Masuk (restok)</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="move-qty">Jumlah</label>
+                <input id="move-qty" name="qty" type="number" min="0" step="any" inputmode="decimal" required>
+              </div>
+            </div>
+            <div class="field">
+              <label for="move-note">Catatan (opsional)</label>
+              <input id="move-note" name="note" maxlength="200" placeholder="Contoh: order Shopee #123">
+            </div>
+            <p class="error-text" data-hook="move-error" role="alert"></p>
+            <button class="btn btn--primary" type="submit">Catat</button>
+          </form>
+        </section>
+      </div>
+      <section class="panel" aria-labelledby="stock-table-title">
+        <h2 id="stock-table-title">Daftar stok</h2>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Barang</th>
+                <th scope="col">Stok</th>
+                <th scope="col">Minimum</th>
+                <th scope="col">Keluar 7 hari</th>
+                <th scope="col">Saran restok</th>
+                <th scope="col"><span class="visually-hidden">Aksi</span></th>
+              </tr>
+            </thead>
+            <tbody data-hook="stock-table"></tbody>
+          </table>
+        </div>
+      </section>
+      <div class="grid-2">
+        <section class="panel" aria-labelledby="moves-title">
+          <h2 id="moves-title">Riwayat terakhir</h2>
+          <ul class="list" data-hook="stock-moves"></ul>
+        </section>
+        <section class="panel" aria-labelledby="recaps-title">
+          <div class="task__line">
+            <h2 id="recaps-title">Rekap mingguan</h2>
+            <button class="btn btn--small" type="button" data-hook="recap-now">Bikin rekap sekarang</button>
+          </div>
+          <ul class="list" data-hook="stock-recaps"></ul>
+        </section>
+      </div>
+    </section>
+
+    <section class="view" data-view="pemakaian" aria-labelledby="usage-title" hidden>
+      <div class="view__head">
+        <h1 id="usage-title">Pemakaian AI</h1>
+        <p>Token yang dipakai tiap divisi lewat 9router, 7 hari terakhir.</p>
+      </div>
+      <div class="stat-row" data-hook="usage-stats"></div>
+      <section class="panel" aria-labelledby="usage-chart-title">
+        <h2 id="usage-chart-title">Per hari, per divisi</h2>
+        <div class="chart" data-hook="usage-chart"></div>
+        <div class="legend" data-hook="usage-legend"></div>
+      </section>
+      <section class="panel" aria-labelledby="usage-agents-title">
+        <h2 id="usage-agents-title">Siapa yang makai</h2>
+        <div class="table-scroll" data-hook="usage-agents"></div>
+      </section>
+    </section>
+  </main>
+
+  <dialog class="dialog" data-hook="file-dialog" aria-labelledby="file-dialog-title">
+    <div class="dialog__head">
+      <h2 id="file-dialog-title" data-hook="file-dialog-title"></h2>
+      <form method="dialog">
+        <button class="btn btn--small" type="submit">Tutup</button>
+      </form>
+    </div>
+    <pre class="dialog__body" data-hook="file-dialog-body"></pre>
+  </dialog>
+</body>
+</html>

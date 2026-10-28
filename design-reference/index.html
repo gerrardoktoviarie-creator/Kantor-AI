@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Referensi Desain Kantor AI</title>
+  <meta name="description" content="Palet, tipografi, komponen, panduan pixel art, dan mockup layar Kantor AI.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Silkscreen&display=swap">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="board.css">
+  <!-- Classic script, not a module: Chrome blocks modules on file://, and this page is meant to open by double-click. -->
+  <script defer src="board.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <span class="topbar__title">Kantor AI · Referensi Desain</span>
+    <nav class="toc" aria-label="Isi">
+      <a href="#konsep">Konsep</a>
+      <a href="#warna">Warna</a>
+      <a href="#tipografi">Tipografi</a>
+      <a href="#komponen">Komponen</a>
+      <a href="#pixel">Pixel art</a>
+      <a href="#layar">Layar</a>
+      <a href="#gerak">Gerak</a>
+      <a href="#bahasa">Bahasa</a>
+      <a href="#sumber">Sumber</a>
+    </nav>
+    <button class="btn btn--small" type="button" data-action="toggle-theme">Ganti ke mode terang</button>
+  </header>
+
+  <main class="page">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="section__head">
+        <p class="hero__kicker">Design reference v1 · Okt 2026</p>
+        <h1 class="hero__title" id="hero-title">Kantor kecil yang kerja buat kamu, bahkan jam 3 pagi.</h1>
+        <p class="hero__lead">Kantor AI itu dua dunia: <strong>kantor pixel</strong> yang hidup dan lucu, dan <strong>panel kerja</strong> yang tenang dan jelas. Pixel buat rasa, panel buat keputusan. Dua-duanya gak boleh rebutan perhatian.</p>
+      </div>
+      <div class="hero__cast" data-hook="hero-cast" aria-label="Para agent Kantor AI"></div>
+    </section>
+
+    <section class="section" id="konsep" aria-labelledby="konsep-title">
+      <div class="section__head">
+        <p class="section__num">01</p>
+        <h2 class="section__title" id="konsep-title">Konsep & prinsip</h2>
+        <p class="section__intro">Lima aturan yang dipakai buat mutusin semua hal di bawah.</p>
+      </div>
+      <div class="grid grid--3">
+        <article class="tile">
+          <p class="tile__label">Rasa</p>
+          <h3>Studio kecil, bukan korporat</h3>
+          <p>Warm, sedikit iseng, kayak tim 10 orang yang saling kenal. Bukan dashboard SaaS dingin.</p>
+        </article>
+        <article class="tile">
+          <p class="tile__label">Fokus</p>
+          <h3>Kuning = giliran kamu</h3>
+          <p>Kuning cuma muncul kalau ada yang nunggu keputusanmu: rilis, setujui, cek. Kalau semua kuning, gak ada yang penting.</p>
+        </article>
+        <article class="tile">
+          <p class="tile__label">Status</p>
+          <h3>Satu warna, satu arti</h3>
+          <p>Teal kerja, kuning nunggu kamu, merah error, ungu ngobrol/rapat. Sama di kantor, badge, grafik, dan Telegram.</p>
+        </article>
+        <article class="tile">
+          <p class="tile__label">Pixel</p>
+          <h3>Pixel buat suasana, bukan buat dibaca</h3>
+          <p>Teks penting selalu di panel HTML biasa. Di canvas cuma nama, status pendek, dan label ruangan.</p>
+        </article>
+        <article class="tile">
+          <p class="tile__label">Jujur</p>
+          <h3>Bilang apa yang beneran terjadi</h3>
+          <p>"Dimas lagi transkrip 57%" lebih baik dari spinner. Error ditulis apa adanya plus langkah berikutnya.</p>
+        </article>
+        <article class="tile">
+          <p class="tile__label">Akses</p>
+          <h3>Kontras AA minimal</h3>
+          <p>Semua teks lolos 4.5:1. Badge berwarna selalu pakai tinta gelap, bukan putih.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="warna" aria-labelledby="warna-title">
+      <div class="section__head">
+        <p class="section__num">02</p>
+        <h2 class="section__title" id="warna-title">Warna</h2>
+        <p class="section__intro">Dasar navy + kuning dikunci, sisanya diusulkan Huemint (teal & oranye). Klik kotak warna buat nyalin hex-nya.</p>
+      </div>
+
+      <div class="tile">
+        <p class="tile__label">Permukaan & teks</p>
+        <div class="swatches" data-hook="swatches-base"></div>
+      </div>
+      <div class="tile">
+        <p class="tile__label">Status agent</p>
+        <div class="swatches" data-hook="swatches-state"></div>
+      </div>
+      <div class="tile">
+        <p class="tile__label">Warna divisi (ruangan, grafik, legenda)</p>
+        <div class="swatches" data-hook="swatches-division"></div>
+      </div>
+
+      <div class="tile">
+        <p class="tile__label">Kontras WCAG (dihitung, bukan perkiraan)</p>
+        <div class="table-scroll">
+          <table class="contrast">
+            <thead>
+              <tr>
+                <th scope="col">Contoh</th>
+                <th scope="col">Pasangan</th>
+                <th scope="col">Rasio</th>
+                <th scope="col">Hasil</th>
+              </tr>
+            </thead>
+            <tbody data-hook="contrast-rows"></tbody>
+          </table>
+        </div>
+        <p class="section__intro">Satu jebakan: teks putih di atas teal Huemint <code>#00a598</code> cuma 3.07:1, aman buat teks besar saja. Di atas teal selalu pakai tinta <code>#062b26</code>.</p>
+      </div>
+    </section>
+
+    <section class="section" id="tipografi" aria-labelledby="tipografi-title">
+      <div class="section__head">
+        <p class="section__num">03</p>
+        <h2 class="section__title" id="tipografi-title">Tipografi</h2>
+        <p class="section__intro">Plus Jakarta Sans buat semua UI (buatan Indonesia, enak di bahasa Indonesia). Silkscreen cuma buat aksen pixel kecil: label ruangan, kicker, nama pengirim.</p>
+      </div>
+      <div class="tile">
+        <div class="type-row">
+          <span class="type-row__meta">Display · 800 · clamp(1.75rem → 2.5rem)</span>
+          <p class="hero__title">Kantor live</p>
+        </div>
+        <div class="type-row">
+          <span class="type-row__meta">Judul section · 800 · 1.5rem</span>
+          <p class="section__title">Nunggu kamu cek</p>
+        </div>
+        <div class="type-row">
+          <span class="type-row__meta">Judul kartu · 800 · 1rem</span>
+          <p><strong>Bongkar Futsal Jadi Padel di Gorontalo</strong></p>
+        </div>
+        <div class="type-row">
+          <span class="type-row__meta">Body · 400 · 0.95rem / 1.55</span>
+          <p>Sari udah nulis naskah reels 30 detik. Cek dulu sebelum Ale jelasin ke klien.</p>
+        </div>
+        <div class="type-row">
+          <span class="type-row__meta">Muted · 400 · 0.85rem</span>
+          <p class="section__intro">Bakri Padel · tayang Sen, 2 Nov 12.00</p>
+        </div>
+        <div class="type-row">
+          <span class="type-row__meta">Pixel · Silkscreen · 0.75rem, maks 3 kata</span>
+          <p class="pixel-label">Studio Sosmed</p>
+        </div>
+        <div class="type-row">
+          <span class="type-row__meta">Mono · log, path, hex</span>
+          <p><code>workspace/projects/booking-padel/server.js</code></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="komponen" aria-labelledby="komponen-title">
+      <div class="section__head">
+        <p class="section__num">04</p>
+        <h2 class="section__title" id="komponen-title">Komponen</h2>
+        <p class="section__intro">Semua yang ada di app, versi rapinya. Satu tombol primer per kartu.</p>
+      </div>
+      <div class="grid grid--2">
+        <div class="tile">
+          <p class="tile__label">Tombol</p>
+          <div class="row">
+            <button class="btn btn--primary" type="button">Oke, rilis ke klien</button>
+            <button class="btn" type="button">Revisi dulu</button>
+            <button class="btn btn--ghost" type="button">Batal</button>
+            <button class="btn" type="button" disabled>Lagi nyalain…</button>
+          </div>
+          <p class="section__intro">Primer = aksi yang majuin kerjaan. Sekunder = balik/ubah. Ghost = keluar.</p>
+        </div>
+        <div class="tile">
+          <p class="tile__label">Badge status</p>
+          <div class="row">
+            <span class="badge">Santai</span>
+            <span class="badge badge--working">Lagi kerja</span>
+            <span class="badge badge--waiting">Nunggu kamu cek</span>
+            <span class="badge badge--talk">Lagi rapat</span>
+            <span class="badge badge--ok">Disetujui klien</span>
+            <span class="badge badge--error">Error</span>
+          </div>
+        </div>
+        <div class="tile">
+          <p class="tile__label">Filter (chips)</p>
+          <div class="row">
+            <span class="chip chip--active">Semua</span>
+            <span class="chip">Perlu dicek</span>
+            <span class="chip">Di klien</span>
+            <span class="chip">Disetujui</span>
+          </div>
+        </div>
+        <div class="tile">
+          <p class="tile__label">Form</p>
+          <div class="field">
+            <label for="demo-brief">Brief</label>
+            <textarea id="demo-brief" rows="2">Progres pembangunan lapangan padel, dulu futsal sekarang dibongkar</textarea>
+          </div>
+        </div>
+        <div class="tile">
+          <p class="tile__label">Agent ngomong (speaker + bubble)</p>
+          <div class="speaker">
+            <canvas width="36" height="66" data-look="ale" aria-hidden="true"></canvas>
+            <div class="bubble">
+              <p class="bubble__who">Ale · Creative Lead</p>
+              <p>Reels ini nunjukin lapangan futsal kamu berubah jadi arena padel. Tayang Senin jam 12 pas jam istirahat.</p>
+            </div>
+          </div>
+        </div>
+        <div class="tile">
+          <p class="tile__label">Chat</p>
+          <div class="chat">
+            <p class="chat__msg chat__msg--user">Konten Bakri minggu ini gimana?</p>
+            <p class="chat__msg chat__msg--agent">Satu reels udah nunggu kamu cek, satu carousel lagi aku tulis. Mau aku prioritasin yang mana?</p>
+            <p class="chat__typing">Sari lagi ngetik…</p>
+          </div>
+        </div>
+        <div class="tile">
+          <p class="tile__label">Catatan & toast</p>
+          <p class="note">Catatan revisi dari klien: hook-nya kurang nendang.</p>
+          <div class="toast" role="status">Klip "Review Halaman Klien" udah jadi <button class="btn btn--small btn--primary" type="button">Lihat</button></div>
+        </div>
+        <div class="tile">
+          <p class="tile__label">Kosong</p>
+          <p class="empty">Belum ada konten. Kasih brief pertama ke Sari di atas.</p>
+          <p class="section__intro">Layar kosong selalu bilang langkah berikutnya, bukan cuma "Tidak ada data".</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="pixel" aria-labelledby="pixel-title">
+      <div class="section__head">
+        <p class="section__num">05</p>
+        <h2 class="section__title" id="pixel-title">Panduan pixel art</h2>
+        <p class="section__intro">Karakter 12×22 piksel, kantor isometrik 2:1 (ubin 24×12). Diskalakan dengan bilangan bulat, gak pernah di-blur.</p>
+      </div>
+
+      <div class="tile">
+        <p class="tile__label">Pemeran (warna rambut & baju tiap agent)</p>
+        <div class="cast" data-hook="cast"></div>
+      </div>
+
+      <div class="tile">
+        <p class="tile__label">Pose & status</p>
+        <div class="stage">
+          <canvas width="560" height="150" data-hook="poses" aria-label="Pose agent: santai, jalan, kerja, nunggu, error, ngobrol"></canvas>
+        </div>
+        <p class="section__intro">Kerja = duduk + kepala naik-turun pelan. Nunggu = berdiri di meja + gelembung kuning "!". Santai = jalan ke pantry/sofa. Ngobrol = berdua, gelembung "…" gantian.</p>
+      </div>
+
+      <div class="rooms" data-hook="rooms"></div>
+
+      <div class="grid grid--2">
+        <div class="tile">
+          <p class="tile__label">Aturan gambar</p>
+          <ul class="principles">
+            <li>Outline gak dipakai; bentuk dibaca dari 3 sisi kotak (atas paling terang, kiri paling gelap).</li>
+            <li>Maksimal 3 warna per benda + 1 warna aksen (layar monitor, lampu rak).</li>
+            <li>Lampu yang nyala = ada yang kerja (monitor teal, lampu kamera merah).</li>
+            <li>Malam (19.00–06.00): overlay navy 28%, jendela gelap berbintang.</li>
+            <li>Tiap ruangan punya satu "benda identitas" yang kelihatan dari jauh.</li>
+          </ul>
+        </div>
+        <div class="tile">
+          <p class="tile__label">Ide berikutnya</p>
+          <ul class="principles">
+            <li>Divisi baru = ruangan baru dengan benda identitas (Jualan & CS: meja kasir + headset).</li>
+            <li>Agent naik level: aksesori kecil (kacamata, topi) tiap 50 tugas beres.</li>
+            <li>Kucing kantor yang tidur di sofa kalau semua agent santai.</li>
+            <li>Papan pengumuman di lobby nampilin deadline Classroom terdekat.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="layar" aria-labelledby="layar-title">
+      <div class="section__head">
+        <p class="section__num">06</p>
+        <h2 class="section__title" id="layar-title">Layar utama</h2>
+        <p class="section__intro">Mockup statis dengan token di atas. Pola diambil dari app nyata di Mobbin (lihat Sumber).</p>
+      </div>
+
+      <div class="screen">
+        <div class="screen__caption">
+          <h3>Kantor live</h3>
+          <p>Denah di kiri sebagai "TV", panel kanan buat bertindak. "Nunggu kamu cek" selalu paling atas.</p>
+        </div>
+        <div class="screen__frame">
+          <div class="screen__bar">
+            <span class="screen__brand">Kantor AI</span>
+            <span class="screen__nav"><span class="screen__nav--active">Kantor</span><span>Konten</span><span>Klip</span><span>IT</span><span>Tugas</span></span>
+          </div>
+          <div class="screen__body screen__split">
+            <div class="stage">
+              <canvas width="640" height="380" data-hook="mini-office" aria-label="Contoh denah kantor"></canvas>
+            </div>
+            <div class="grid">
+              <div class="mini-card">
+                <p class="mini-card__title">Nunggu kamu cek</p>
+                <div class="speaker">
+                  <canvas width="24" height="44" data-look="sari" aria-hidden="true"></canvas>
+                  <div><strong>Sari · Manajer Konten</strong><p class="section__intro">Naskah "Bongkar Futsal Jadi Padel" nunggu kamu cek</p></div>
+                </div>
+                <div class="speaker">
+                  <canvas width="24" height="44" data-look="bayu" aria-hidden="true"></canvas>
+                  <div><strong>Bayu · Lead Programmer</strong><p class="section__intro">Proyek "Booking Padel" siap dicek</p></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid--2">
+        <div class="screen">
+          <div class="screen__caption">
+            <h3>Review konten</h3>
+            <p>Pola kartu + tabel adegan. Aksi di bawah, satu primer.</p>
+          </div>
+          <div class="screen__frame">
+            <div class="screen__body">
+              <div class="mini-card">
+                <div class="mini-card__head">
+                  <span class="mini-card__title">Bongkar Futsal Jadi Padel</span>
+                  <span class="badge">Reels</span>
+                  <span class="badge badge--waiting">Perlu kamu cek</span>
+                </div>
+                <p class="section__intro">Bakri Padel · tayang Sen, 2 Nov 12.00</p>
+                <table class="scenes">
+                  <thead><tr><th scope="col">Detik</th><th scope="col">Visual</th><th scope="col">Teks layar</th></tr></thead>
+                  <tbody>
+                    <tr><td>0–3</td><td>Palu hancurin tiang gawang</td><td>DARI FUTSAL KE PADEL</td></tr>
+                    <tr><td>3–8</td><td>Lantai sintetis dilepas</td><td>DIBONGKAR TUNTAS</td></tr>
+                    <tr><td>8–13</td><td>Laser level di tanah</td><td>PERSIAPAN DASAR</td></tr>
+                  </tbody>
+                </table>
+                <div class="row">
+                  <button class="btn btn--primary btn--small" type="button">Oke, rilis ke klien</button>
+                  <button class="btn btn--small" type="button">Revisi dulu</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="screen">
+          <div class="screen__caption">
+            <h3>Preview klien</h3>
+            <p>Klien lihat hasil di bingkai HP, Ale yang jelasin. Tiga tombol, gak ada jargon internal.</p>
+          </div>
+          <div class="screen__frame">
+            <div class="screen__body screen__split">
+              <div class="phone" aria-hidden="true">
+                <p class="phone__hook">Dulu futsal, sekarang padel.</p>
+                <p>DIBONGKAR TUNTAS</p>
+                <p>RANGKA & KACA DIPASANG</p>
+                <p class="phone__caption">ini <mark>bukan</mark> render</p>
+              </div>
+              <div class="grid">
+                <div class="speaker">
+                  <canvas width="24" height="44" data-look="ale" aria-hidden="true"></canvas>
+                  <p class="bubble">Reels ini nunjukin progres asli, bukan render. Tayang Senin jam 12.</p>
+                </div>
+                <div class="row">
+                  <button class="btn btn--primary btn--small" type="button">Setujui</button>
+                  <button class="btn btn--small" type="button">Minta revisi</button>
+                  <button class="btn btn--small" type="button">Ganti jadwal</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="screen">
+          <div class="screen__caption">
+            <h3>Klip video</h3>
+            <p>Pola video editor (VEED, Vimeo): pemutar di atas, timeline, saran sebagai kartu yang bisa diklik.</p>
+          </div>
+          <div class="screen__frame">
+            <div class="screen__body">
+              <div class="timeline" aria-label="Timeline video dengan klip terpilih detik 13,8 sampai 44,1">
+                <span class="timeline__wave"></span>
+                <span class="timeline__clip" data-hook="clip-range"></span>
+              </div>
+              <div class="mini-card">
+                <div class="mini-card__head">
+                  <span class="mini-card__title">Review Halaman Klien</span>
+                  <span class="badge">0:14 – 0:44</span>
+                </div>
+                <p class="section__intro">Fitur inti: klien lihat, komentar, setujui sebelum tayang.</p>
+                <div class="row">
+                  <span class="badge badge--ok">Subtitle</span>
+                  <span class="badge">9:16</span>
+                  <button class="btn btn--primary btn--small" type="button">Suruh Dimas potong</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="screen">
+          <div class="screen__caption">
+            <h3>Proyek IT jalan</h3>
+            <p>Pola code editor/console: langkah tim di atas, log gelap di bawah, satu tombol "Suruh Bayu benerin".</p>
+          </div>
+          <div class="screen__frame">
+            <div class="screen__body">
+              <div class="steps">
+                <span class="badge badge--ok">Riset</span>
+                <span class="badge badge--ok">Desain</span>
+                <span class="badge badge--ok">Database</span>
+                <span class="badge badge--ok">Backend</span>
+                <span class="badge badge--ok">Frontend</span>
+                <span class="badge badge--working">Review</span>
+              </div>
+              <pre class="log">Server jalan di port 4317
+GET /api/lapangan 200
+<span class="log__err">TypeError: Cannot read properties of undefined (reading 'jam')</span></pre>
+              <div class="row">
+                <span class="badge badge--error">Error</span>
+                <button class="btn btn--primary btn--small" type="button">Suruh Bayu benerin</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="screen">
+          <div class="screen__caption">
+            <h3>Tugas Classroom</h3>
+            <p>Garis kiri kartu = urgensi (merah lewat, kuning &lt; 48 jam). Rencana Mira sebagai langkah bernomor.</p>
+          </div>
+          <div class="screen__frame">
+            <div class="screen__body">
+              <div class="homework homework--late">
+                <div class="mini-card__head"><span class="mini-card__title">Latihan Transformasi Geometri</span><span class="badge badge--error">Lewat deadline</span></div>
+                <p class="section__intro">XI RPL · 27 Okt 08.51</p>
+              </div>
+              <div class="homework homework--soon">
+                <div class="mini-card__head"><span class="mini-card__title">Flowchart & Algoritma</span><span class="badge badge--waiting">Deadline dekat</span></div>
+                <p><strong>Kata Mira:</strong> bikin flowchart alur produk digital.</p>
+                <p class="section__intro">1. Pilih produk → 2. Gambar flowchart → 3. Tulis algoritma</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="screen">
+          <div class="screen__caption">
+            <h3>Pesan Telegram</h3>
+            <p>Satu tugas satu blok, tanggal ditulis lengkap, emoji cuma satu di depan sebagai penanda jenis.</p>
+          </div>
+          <div class="tg">
+            <p class="tg__msg">⏰ Mira: 24 jam lagi deadline, belum dikumpul:
+
+• Landing page (Pemrograman Web)
+  deadline Rabu, 29 Okt 10.00</p>
+            <p class="tg__msg">☀️ Pagi! Ini tugas yang deadline-nya seminggu ke depan:
+
+• Flowchart & Algoritma (XI RPL)
+• Descriptive Text (XI RPL 26)</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="gerak" aria-labelledby="gerak-title">
+      <div class="section__head">
+        <p class="section__num">07</p>
+        <h2 class="section__title" id="gerak-title">Gerak</h2>
+        <p class="section__intro">Gerakan di panel cepat dan pelan-pelan aja (150–220 ms). Gerakan di kantor pixel boleh hidup, tapi pakai "steps" biar tetap terasa pixel.</p>
+      </div>
+      <div class="grid grid--3">
+        <div class="tile motion">
+          <p class="tile__label">Kerja</p>
+          <span class="motion__dot"></span>
+          <p class="section__intro">Naik-turun 1 px, 900 ms, steps(2).</p>
+        </div>
+        <div class="tile motion">
+          <p class="tile__label">Nunggu kamu</p>
+          <span class="motion__dot motion__dot--wait"></span>
+          <p class="section__intro">Lompat kecil tiap 1,6 detik. Cukup buat narik mata, gak ganggu.</p>
+        </div>
+        <div class="tile motion">
+          <p class="tile__label">Panel</p>
+          <button class="btn btn--primary" type="button">Tekan aku</button>
+          <p class="section__intro">Turun 1 px saat ditekan, warna berubah 150 ms. Hormati "reduce motion".</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="bahasa" aria-labelledby="bahasa-title">
+      <div class="section__head">
+        <p class="section__num">08</p>
+        <h2 class="section__title" id="bahasa-title">Gaya bahasa</h2>
+        <p class="section__intro">Agent ngomong kayak rekan kerja yang santai. Panel ngomong pendek dan jelas.</p>
+      </div>
+      <div class="tile voice">
+        <span class="voice__tag voice__tag--do">Pakai</span><span>"Naskah nunggu kamu cek" · "Suruh Bayu benerin" · "Klip udah jadi"</span>
+        <span class="voice__tag voice__tag--dont">Hindari</span><span>"Konten berhasil diproses oleh sistem" · "Submit" · "Error 500"</span>
+        <span class="voice__tag voice__tag--do">Pakai</span><span>Error + langkah: "9router mati, agent gak bisa kerja. Nyalain 9router dulu."</span>
+        <span class="voice__tag voice__tag--dont">Hindari</span><span>"Terjadi kesalahan. Silakan coba lagi nanti."</span>
+        <span class="voice__tag voice__tag--do">Pakai</span><span>Nama agent sebagai subjek: "Dimas lagi transkrip 57%"</span>
+        <span class="voice__tag voice__tag--dont">Hindari</span><span>Spinner tanpa teks, atau "Loading…"</span>
+      </div>
+    </section>
+
+    <section class="section" id="sumber" aria-labelledby="sumber-title">
+      <div class="section__head">
+        <p class="section__num">09</p>
+        <h2 class="section__title" id="sumber-title">Sumber referensi</h2>
+        <p class="section__intro">Diambil 28 Okt 2026. Mobbin cuma bagian /explore yang publik; buka link buat lihat screenshot aslinya.</p>
+      </div>
+      <div class="grid grid--2">
+        <div class="tile">
+          <p class="tile__label">Warna · Huemint</p>
+          <ul class="refs">
+            <li><a href="https://huemint.com/brand-intersection/#palette=121a2e-f4b942-ee6230-00a598" target="_blank" rel="noopener">Palet Kantor AI di Huemint</a> (navy + kuning dikunci, teal & oranye dari model transformer)</li>
+            <li>Opsi lain yang sempat keluar: <code>#df793e / #afa9a7</code>, <code>#e5655c / #c6b6b6</code>, <code>#329c64 / #ba662b</code></li>
+          </ul>
+        </div>
+        <div class="tile">
+          <p class="tile__label">Pola UI · Mobbin</p>
+          <ul class="refs">
+            <li><a href="https://mobbin.com/explore/web/screens/dashboard" target="_blank" rel="noopener">Dashboard</a>: Hootsuite, Substack, Maze, Dialpad, Salesforce. Pola berulang: tab + segmented control + badge.</li>
+            <li><a href="https://mobbin.com/explore/web/screens/chat-detail" target="_blank" rel="noopener">Chat detail</a>: avatar, drawer samping, chat bot di panel kanan.</li>
+            <li><a href="https://mobbin.com/explore/web/screens/calendar" target="_blank" rel="noopener">Calendar</a>: Notion, ClickUp, Wrike, Todoist. Buat kalender konten nanti.</li>
+            <li><a href="https://mobbin.com/explore/web/screens/video-player" target="_blank" rel="noopener">Video player</a>: VEED, Vimeo. Subtitle di atas video, chapter di samping.</li>
+            <li><a href="https://mobbin.com/explore/web/screens/code-editor" target="_blank" rel="noopener">Code editor</a>: monday.com, multi-column layout + tab.</li>
+            <li><a href="https://mobbin.com/explore/mobile/screens/charts" target="_blank" rel="noopener">Charts</a>: KakaoBank, stoic. Buat halaman Pemakaian AI.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Token siap pakai ada di <code>tokens.css</code>. Ganti nilai di sana, bukan di komponen.</p>
+  </footer>
+</body>
+</html>

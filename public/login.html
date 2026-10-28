@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masuk · Kantor AI</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Silkscreen&display=swap">
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/login.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand__name">Kantor AI</span>
+    </div>
+  </header>
+  <main class="page">
+    <section class="login" aria-labelledby="login-title">
+      <h1 id="login-title">Masuk ke kantor</h1>
+      <form class="panel form" data-hook="login-form">
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <p class="error-text" data-hook="login-error" role="alert"></p>
+        <button class="btn btn--primary" type="submit">Masuk</button>
+      </form>
+      <p class="panel__hint">Password-nya yang diisi waktu pasang Kantor AI (KANTOR_PASSWORD di file .env).</p>
+    </section>
+  </main>
+</body>
+</html>

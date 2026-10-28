@@ -1,0 +1,14 @@
+{
+  "name": "kantor-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kantor virtual berisi agent AI per divisi: sosmed, IT, dan asisten tugas.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

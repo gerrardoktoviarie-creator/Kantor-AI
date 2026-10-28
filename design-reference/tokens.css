@@ -1,0 +1,92 @@
+/*
+  Kantor AI design tokens.
+  Dark is the default (the office lives at night as much as by day); light is opt-in via
+  [data-theme="light"]. Every text pair here was checked against WCAG AA (see index.html, "Kontras").
+  Palette source: Huemint brand-intersection with navy + text + yellow locked
+  https://huemint.com/brand-intersection/#palette=121a2e-f4b942-ee6230-00a598
+*/
+:root {
+  /* Surfaces */
+  --bg: #121a2e;
+  --panel: #1b2540;
+  --panel-2: #222e4f;
+  --line: #2f3c62;
+  --stage: #0d1424;
+
+  /* Text */
+  --text: #edf0f7;
+  --muted: #9ba6c2;
+
+  /* Brand: one warm accent, used sparingly for "your turn" moments */
+  --accent: #f4b942;
+  --accent-ink: #2a1d00;
+  --accent-hover: #ffcb5c;
+
+  /* Agent states (badge backgrounds, always with dark ink on top) */
+  --state-working: #5ec4b6;
+  --state-working-ink: #062b26;
+  --state-waiting: #f4b942;
+  --state-waiting-ink: #2a1d00;
+  --state-error: #ef6f6c;
+  --state-error-ink: #2b0605;
+  --state-talk: #b8a1ff;
+  --state-talk-ink: #111827;
+  --state-ok: #2c5a46;
+  --state-ok-ink: #c9f2dd;
+
+  /* Division colors (rooms, charts, legend) */
+  --div-sosmed: #e0607e;
+  --div-it: #4aa3df;
+  --div-tugas: #f4b942;
+  --div-live: #ee6230;
+
+  /* Type */
+  --font: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-pixel: "Silkscreen", "Plus Jakarta Sans", monospace;
+  --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.85rem;
+  --fs-md: 0.95rem;
+  --fs-lg: 1.15rem;
+  --fs-xl: 1.5rem;
+  --fs-2xl: clamp(1.75rem, 1.2rem + 2vw, 2.5rem);
+
+  /* Space, radius, depth */
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+  --s7: 3rem;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --pill: 999px;
+  --shadow: 0 6px 18px rgb(0 0 0 / 0.25);
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --fast: 150ms;
+  --base: 220ms;
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f3ec;
+  --panel: #ffffff;
+  --panel-2: #efe9dd;
+  --line: #ddd5c4;
+  --stage: #e9e2d3;
+
+  --text: #1b2238;
+  --muted: #5a6278;
+
+  /* Yellow stays a fill; text that must read as "accent" uses the darker amber. */
+  --accent-text: #8a5a00;
+  --state-working: #00a598;
+  --state-error: #b42318;
+  --state-error-ink: #ffffff;
+  --state-ok: #d6efe1;
+  --state-ok-ink: #14532d;
+  --shadow: 0 6px 18px rgb(27 34 56 / 0.12);
+}
