@@ -1,0 +1,1 @@
+{ "agent": "bayu", "title": "Lvl 4 · Satu jadwal kebooking dobel kalau dipesan barengan", "attempts": 3, "lesson": "Cek-lalu-simpan yang dipisah await itu race condition: request lain nyelip di tengah. Kunci slotnya dulu (UNIQUE constraint + tangkap error-nya, atau simpan status 'pending' sebelum await), lalu lepas lagi kalau proses berikutnya gagal." }

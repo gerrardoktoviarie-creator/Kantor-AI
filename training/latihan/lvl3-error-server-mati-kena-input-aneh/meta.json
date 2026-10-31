@@ -1,0 +1,1 @@
+{ "agent": "bayu", "title": "Lvl 3 · Server mati total kena input aneh", "lesson": "Error di handler async dan di dalam setTimeout/callback gak ketangkep try/catch biasa dan bisa matiin seluruh server. Validasi input di pintu masuk (JSON rusak, tipe, nilai) dan ubah error jadi 400, bukan crash." }

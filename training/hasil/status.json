@@ -1,0 +1,19 @@
+{
+  "lvl1-database-01-skema-rusak": true,
+  "lvl1-database-02-laporan-omzet-salah": true,
+  "lvl1-database-03-pencarian-error-tanda-kutip": true,
+  "lvl1-error-01-server-gak-mau-nyala": true,
+  "lvl1-error-02-simpan-catatan-selalu-gagal": true,
+  "lvl1-error-03-port-dan-detail-catatan": true,
+  "lvl1-error-04-daftar-tugas-kosong": true,
+  "lvl2-database-email-dobel-dan-lambat": true,
+  "lvl2-error-tandai-selesai": true,
+  "lvl3-database-halaman-produk-loncat": true,
+  "lvl3-error-server-mati-kena-input-aneh": true,
+  "lvl4-database-migrasi-tanpa-hilang-data": true,
+  "lvl4-error-booking-dobel": true,
+  "lvl5-database-rekap-bulanan-meleset": true,
+  "lvl5-error-total-belanja-ngaco": true,
+  "lvl6-database-jadwal-lapangan-tabrakan": true,
+  "lvl6-error-antrean-kirim-pesan": true
+}

@@ -1,0 +1,1 @@
+{ "agent": "bayu", "title": "Simpan catatan selalu ditolak", "lesson": "Fungsi async (readJson, fetch, query) wajib di-await. Tanpa await kamu dapet Promise, bukan datanya." }

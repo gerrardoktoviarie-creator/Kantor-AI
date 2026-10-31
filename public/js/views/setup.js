@@ -4,9 +4,9 @@ import { avatarCanvas, paintAvatar } from '../sprites.js';
 import { createOffice } from '../office-canvas.js';
 
 const STYLES = [
-  { id: 'modern', name: 'Modern', blurb: 'Marmer, kaca, warna kalem.' },
-  { id: 'hangat', name: 'Kayu hangat', blurb: 'Lantai kayu, dinding cokelat.' },
-  { id: 'mewah', name: 'Mewah gelap', blurb: 'Dinding gelap, marmer, lampu kuning.' },
+  { id: 'modern', name: 'Modern', blurb: 'Lantai kayu, Lab IT ubin abu, lorong marmer.' },
+  { id: 'hangat', name: 'Kayu hangat', blurb: 'Kayu muda semua, dinding krem kecokelatan.' },
+  { id: 'mewah', name: 'Mewah gelap', blurb: 'Panel kayu walnut, lantai kayu tua.' },
 ];
 
 const FACILITIES = [

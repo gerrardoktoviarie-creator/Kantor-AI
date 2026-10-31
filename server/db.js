@@ -5,7 +5,8 @@ import { DB_PATH } from './config.js';
 
 export function openDb(path = DB_PATH) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
+  // The office and the training scripts share this file; wait for a lock instead of failing.
+  const db = new DatabaseSync(path, { timeout: 10_000 });
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -74,6 +75,14 @@ export function openDb(path = DB_PATH) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS songs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      file TEXT NOT NULL,
+      duration REAL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS projects (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT NOT NULL UNIQUE,
@@ -128,6 +137,10 @@ export function openDb(path = DB_PATH) {
   addColumn(db, 'videos', 'width', 'INTEGER');
   addColumn(db, 'videos', 'height', 'INTEGER');
   addColumn(db, 'clips', 'subtitles', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'clips', 'song_id', 'INTEGER');
+  addColumn(db, 'clips', 'song_mode', 'TEXT');
+  addColumn(db, 'clips', 'song_volume', 'INTEGER');
+  addColumn(db, 'clips', 'song_start', 'REAL');
   return db;
 }
 

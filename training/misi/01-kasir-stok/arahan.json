@@ -1,0 +1,36 @@
+{
+  "name": "Kasir Kedai Kopi Senja: fitur stok",
+  "business": "Kedai Kopi Senja, kedai kopi kecil di Depok. Kasir pakai laptop di meja kasir. Aplikasi kasir ini (folder proyek) udah dipakai 3 bulan dan database-nya (data.db) udah berisi data penjualan asli.",
+  "steps": [
+    {
+      "id": "migrasi",
+      "agent": "joko",
+      "message": "Jok, mulai bulan depan kedai mau catat stok. Tolong siapin database-nya:\n- Tiap menu punya stok sekarang (stock) sama batas minimum stok (min_stock). Batas minimumnya bisa beda-beda per menu, defaultnya 5. Stok gak boleh minus.\n- Database di laptop kasir udah isi data 3 bulan, JANGAN sampe ada yang ilang. Bikin file migrasi db/migrations/002-stok.sql buat database yang udah ada, tandain versinya pake PRAGMA user_version = 2.\n- db/schema.sql juga diupdate buat instalasi baru: langsung versi 2 (udah ada kolom stok dan user_version 2), tetap aman dijalanin berkali-kali.\nStok awal menu yang udah ada isi 0 aja, nanti aku isi manual.",
+      "lesson": "Perubahan database di aplikasi yang udah jalan = dua hal: file migrasi buat database lama (data harus utuh, versi ditandai user_version) dan schema.sql buat instalasi baru yang hasil akhirnya sama persis."
+    },
+    {
+      "id": "stok-server",
+      "agent": "fajar",
+      "message": "Jar, Joko udah nyiapin database stok (cek db/migrations/002-stok.sql sama db/schema.sql). Bagian server tolong:\n1. Pas server nyala, kalau database-nya masih versi lama (user_version < 2), jalanin migrasi Joko otomatis. Database baru tetap pake schema.sql. Server dinyalain ulang berkali-kali gak boleh error.\n2. GET /api/products sekarang balikin juga stock, min_stock, sama low (true kalau stock <= min_stock).\n3. Tiap penjualan ngurangin stok. Kalau stoknya gak cukup tolak pake 409 dan pesan yang jelas, stoknya jangan berubah.\n4. Endpoint restok: POST /api/products/:id/restock body { \"qty\": n } (bilangan bulat 1-1000), balikin data menu yang udah ke-update. Menu gak ada 404, qty ngaco 400.",
+      "lesson": "Server harus nanganin database lama dan baru: cek PRAGMA user_version saat start lalu jalanin migrasi yang belum. Stok dikurangi dan dicek dalam satu langkah atomik (UPDATE ... WHERE stock >= ? lalu cek changes) di transaksi yang sama dengan insert penjualan."
+    },
+    {
+      "id": "batal",
+      "agent": "fajar",
+      "message": "Eh Jar, sori ada yang ketinggalan. Kasir sering salah pencet. Tambahin DELETE /api/sales/:id buat batalin penjualan: stoknya dibalikin dan penjualannya ilang dari daftar hari ini. Yang boleh dibatalin cuma penjualan hari ini (WIB), yang dari hari sebelumnya tolak pake 409. Penjualan yang gak ada 404.",
+      "lesson": "Permintaan tambahan di tengah jalan dikerjain tanpa ngerusak yang udah jadi. Batal transaksi = hapus penjualan dan balikin stok dalam satu transaksi, dengan aturan waktu pakai zona bisnis (WIB)."
+    },
+    {
+      "id": "tampilan",
+      "agent": "rani",
+      "message": "Ran, server stok udah jadi (lihat server.js). Halaman kasir di public/ tolong:\n- Tampilin sisa stok di tiap menu.\n- Menu yang stoknya tipis (low) dikasih tanda yang kebaca, jangan cuma warna, soalnya ada kasir yang buta warna. Tulis aja \"Stok tipis\".\n- Stok 0: tombolnya gak bisa dipencet.\n- Kalau jual gagal (misal stok kurang), tampilin pesan error dari server, jangan pesan umum.\n- Abis jual, angka stok di layar langsung ke-update.\nJangan pake innerHTML buat data dari server ya.",
+      "lesson": "Frontend ngikutin kontrak API yang ada (nama field persis), tanda status gak boleh cuma warna, tombol yang gak bisa dipakai di-disable, dan pesan error dari server ditampilin apa adanya."
+    },
+    {
+      "id": "rilis",
+      "agent": "bayu",
+      "message": "Bay, besok pagi aku mau update aplikasi di laptop kasir. Sebelum itu tolong review kerjaan Joko, Fajar, sama Rani. Pastiin jalan di database lama (yang udah ada isinya) maupun database baru. Kalau ada bug benerin langsung.\nTerus tulis CATATAN-RILIS.md buat aku, singkat aja (maksimal 300 kata): apa yang berubah, langkah update di laptop kasir (termasuk backup data.db dulu), sama risiko yang perlu aku tahu.",
+      "lesson": "Sebelum rilis: uji jalur database lama dan baru, cek semua fitur tim nyambung, lalu tulis catatan rilis singkat buat orang non-teknis: apa yang berubah, langkah update (backup dulu), dan risikonya."
+    }
+  ]
+}

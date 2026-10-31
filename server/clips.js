@@ -13,12 +13,16 @@ const UPLOAD_DIR = join(WORKSPACE, 'uploads');
 const CLIP_DIR = join(WORKSPACE, 'clips');
 const THUMB_DIR = join(WORKSPACE, 'thumbs');
 const AUDIO_DIR = join(WORKSPACE, 'audio');
+const MUSIC_DIR = join(WORKSPACE, 'music');
 // Escaped for ffmpeg's filter syntax, where ":" separates options.
 const FONTS_DIR = process.platform === 'win32'
   ? `${(process.env.WINDIR || 'C:\\Windows').replace(/\\/g, '/').replace(':', '\\:')}/Fonts`
   : '/usr/share/fonts';
 const VIDEO_TYPES = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v']);
 const MAX_UPLOAD = 4 * 1024 ** 3;
+const SONG_TYPES = new Set(['.mp3', '.m4a', '.aac', '.wav', '.ogg', '.opus', '.flac']);
+const MAX_SONG = 50 * 1024 ** 2;
+const SONG_FADE_S = 1.5;
 
 const CLIP_MIN = 15;
 const CLIP_MAX = 60;
@@ -161,6 +165,25 @@ registerHandler('clip.analyze', async (task) => {
   return { result: { candidates: candidates.length }, review: `${candidates.length} calon klip dari "${video.name}"` };
 });
 
+/**
+ * Extra ffmpeg input and audio graph that put a song under the clip's own sound ("mix")
+ * or in place of it ("replace"). The song loops if it's shorter than the clip and fades
+ * out over the last 1.5 s. A source without audio can only be replaced.
+ */
+export function musicArgs({ song, start = 0, mode, volume, length, sourceHasAudio }) {
+  const level = (volume / 100).toFixed(2);
+  const fadeAt = Math.max(0, length - SONG_FADE_S).toFixed(2);
+  const music = `[1:a]volume=${level},afade=t=in:d=0.3,afade=t=out:st=${fadeAt}:d=${SONG_FADE_S}`;
+  const graph = mode === 'replace' || !sourceHasAudio
+    ? `${music}[aout]`
+    // normalize=0 keeps the voice at full volume; amix would otherwise halve both inputs.
+    : `${music}[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[aout]`;
+  return {
+    input: ['-stream_loop', '-1', '-ss', String(start), '-i', song],
+    output: ['-filter_complex', graph, '-map', '0:v:0', '-map', '[aout]'],
+  };
+}
+
 export function parseSize(log) {
   const m = log.match(/Video:.*?(\d{2,5})x(\d{2,5})/);
   return m ? { width: Number(m[1]), height: Number(m[2]) } : null;
@@ -229,6 +252,22 @@ registerHandler('clip.cut', async (task) => {
     ? ["crop='min(iw,ih*9/16)':ih,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"]
     : [];
 
+  let music = { input: [], output: [] };
+  if (clip.song_id) {
+    const song = db.prepare('SELECT file FROM songs WHERE id = ?').get(clip.song_id);
+    if (!song) throw new Error('Lagu buat klip ini udah dihapus. Potong ulang tanpa lagu atau pilih lagu lain.');
+    // A zero-length decode is the cheapest way to get ffmpeg to list the source's streams.
+    const probe = await runFfmpeg(['-i', join(UPLOAD_DIR, clip.src), '-t', '0', '-f', 'null', '-']);
+    music = musicArgs({
+      song: join(MUSIC_DIR, song.file),
+      start: clip.song_start ?? 0,
+      mode: clip.song_mode,
+      volume: clip.song_volume ?? 30,
+      length: clip.end_s - clip.start_s,
+      sourceHasAudio: /Stream #\S+.*Audio:/.test(probe),
+    });
+  }
+
   const words = clip.subtitles ? parseJson(clip.transcript, []) : [];
   if (clip.subtitles && !words.length) throw new Error('Video ini gak punya transkrip, jadi gak bisa dikasih subtitle.');
   if (words.length) {
@@ -242,7 +281,9 @@ registerHandler('clip.cut', async (task) => {
   db.prepare("UPDATE clips SET state = 'cutting' WHERE id = ?").run(clip.id);
   try {
     await runFfmpeg([
-      '-y', '-ss', String(clip.start_s), '-i', join(UPLOAD_DIR, clip.src), '-t', String(clip.end_s - clip.start_s),
+      '-y', '-ss', String(clip.start_s), '-i', join(UPLOAD_DIR, clip.src), ...music.input,
+      '-t', String(clip.end_s - clip.start_s),
+      ...music.output,
       ...(filters.length ? ['-vf', filters.join(',')] : []),
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k',
       '-movflags', '+faststart', file,
@@ -257,8 +298,13 @@ registerHandler('clip.cut', async (task) => {
   return { result: { clipId: clip.id }, review: `Klip "${clip.title}" udah jadi` };
 });
 
+function toSong(row) {
+  return { id: row.id, name: row.name, duration: row.duration, url: `/media/music/${row.file}`, createdAt: row.created_at };
+}
+
 function toVideo(row) {
-  const clips = db.prepare('SELECT * FROM clips WHERE video_id = ? ORDER BY start_s').all(row.id);
+  const clips = db.prepare(`SELECT clips.*, songs.name AS song_name FROM clips
+    LEFT JOIN songs ON songs.id = clips.song_id WHERE video_id = ? ORDER BY start_s`).all(row.id);
   return {
     id: row.id,
     name: row.name,
@@ -274,6 +320,7 @@ function toVideo(row) {
       end: c.end_s,
       layout: c.layout,
       subtitles: Boolean(c.subtitles),
+      song: c.song_id ? { name: c.song_name ?? 'lagu yang udah dihapus', mode: c.song_mode, volume: c.song_volume } : null,
       state: c.state,
       url: c.file && `/media/clips/${c.file}`,
     })),
@@ -326,13 +373,64 @@ export function registerClipRoutes(router) {
     const layout = body.layout === 'original' ? 'original' : 'vertical';
     const subtitles = body.subtitles === true || body.subtitles === 'on';
     if (subtitles && !video.transcript) throw new HttpError(409, 'Video ini gak punya transkrip, matikan subtitle dulu.');
+    const music = songChoice(body);
 
-    const { lastInsertRowid } = db.prepare(
-      'INSERT INTO clips (video_id, title, start_s, end_s, layout, subtitles) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(video.id, title, start, end, layout, subtitles ? 1 : 0);
+    const { lastInsertRowid } = db.prepare(`INSERT INTO clips
+      (video_id, title, start_s, end_s, layout, subtitles, song_id, song_mode, song_volume, song_start)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(video.id, title, start, end, layout, subtitles ? 1 : 0, music.id, music.mode, music.volume, music.start);
     const clipId = Number(lastInsertRowid);
     enqueue('dimas', 'clip.cut', `Motong klip "${title}"`, { clipId });
     sendJson(res, 201, { id: clipId });
+  });
+
+  router.get('/api/songs', (req, res) => {
+    sendJson(res, 200, db.prepare('SELECT * FROM songs ORDER BY id DESC').all().map(toSong));
+  });
+
+  router.put('/api/songs', async (req, res, params, url) => {
+    const name = requireText(url.searchParams.get('name'), 'Nama file', 200);
+    const ext = extname(name).toLowerCase();
+    if (!SONG_TYPES.has(ext)) throw new HttpError(400, 'Format lagu gak didukung (pakai mp3, m4a, wav, ogg, atau flac).');
+    const size = Number(req.headers['content-length']);
+    if (!size) throw new HttpError(411, 'Ukuran file gak diketahui.');
+    if (size > MAX_SONG) throw new HttpError(413, 'Lagu kegedean (maks 50 MB).');
+
+    mkdirSync(MUSIC_DIR, { recursive: true });
+    const file = `${Date.now()}-${randomPart()}${ext}`;
+    const target = join(MUSIC_DIR, file);
+    try {
+      await pipeline(req, createWriteStream(target));
+    } catch {
+      rmSync(target, { force: true });
+      throw new HttpError(400, 'Upload putus di tengah jalan.');
+    }
+
+    let duration;
+    try {
+      duration = parseDuration(await runFfmpeg(['-i', target, '-f', 'null', '-']));
+    } catch {
+      duration = null;
+    }
+    if (!duration) {
+      rmSync(target, { force: true });
+      throw new HttpError(400, 'File ini gak kebaca sebagai lagu. Mungkin rusak atau bukan file audio.');
+    }
+
+    const { lastInsertRowid } = db.prepare('INSERT INTO songs (name, file, duration) VALUES (?, ?, ?)')
+      .run(name.replace(/\.[^.]+$/, ''), file, duration);
+    sendJson(res, 201, toSong(db.prepare('SELECT * FROM songs WHERE id = ?').get(Number(lastInsertRowid))));
+  });
+
+  // Finished clips keep their sound; only clips still waiting would lose the song.
+  router.delete('/api/songs/:id', (req, res, { id }) => {
+    const song = db.prepare('SELECT * FROM songs WHERE id = ?').get(toId(id));
+    if (!song) throw new HttpError(404, 'Lagu gak ketemu.');
+    const waiting = db.prepare("SELECT COUNT(*) AS n FROM clips WHERE song_id = ? AND state IN ('queued', 'cutting')").get(song.id).n;
+    if (waiting) throw new HttpError(409, 'Lagu ini lagi dipakai klip yang belum selesai dipotong.');
+    rmSync(join(MUSIC_DIR, song.file), { force: true });
+    db.prepare('DELETE FROM songs WHERE id = ?').run(song.id);
+    sendJson(res, 200, { ok: true });
   });
 
   router.get('/api/videos/:id/transcript', (req, res, { id }) => {
@@ -354,6 +452,21 @@ export function registerClipRoutes(router) {
     db.prepare('DELETE FROM videos WHERE id = ?').run(video.id);
     sendJson(res, 200, { ok: true });
   });
+}
+
+/** Validates the song part of a cut request; no songId means no song. */
+export function songChoice(body) {
+  if (body.songId == null || body.songId === '') return { id: null, mode: null, volume: null, start: null };
+  const song = db.prepare('SELECT * FROM songs WHERE id = ?').get(toId(body.songId));
+  if (!song) throw new HttpError(404, 'Lagu gak ketemu.');
+  const mode = body.songMode === 'replace' ? 'replace' : 'mix';
+  const volume = Number(body.songVolume ?? (mode === 'mix' ? 30 : 100));
+  if (!Number.isFinite(volume) || volume < 0 || volume > 100) throw new HttpError(400, 'Volume lagu harus 0 sampai 100.');
+  const start = Number(body.songStart ?? 0);
+  if (!Number.isFinite(start) || start < 0 || (song.duration && start >= song.duration)) {
+    throw new HttpError(400, `Mulai lagu harus antara 0 dan ${Math.floor(song.duration ?? 0)} detik.`);
+  }
+  return { id: song.id, mode, volume: Math.round(volume), start };
 }
 
 function randomPart() {

@@ -1,0 +1,38 @@
+{
+  "name": "Kasir Kedai Kopi Senja: minggu review",
+  "business": "Kedai Kopi Senja, kedai kopi kecil di Depok. Aplikasi kasir (folder proyek) udah jalan di laptop kasir: menu, stok, restok, batal penjualan, migrasi database otomatis. Database di laptop kasir udah versi 2 dan berisi data asli. Bayu yang pegang review sebelum apa pun dirilis.",
+  "steps": [
+    {
+      "id": "review-1",
+      "agent": "bayu",
+      "apply": "perubahan/pr1-laporan",
+      "chat": [
+        { "from": "Fajar", "text": "Bay, aku udah nambahin laporan penjualan per menu: GET /api/report?from=YYYY-MM-DD&to=YYYY-MM-DD, tanggal pakai WIB, from sama to dua-duanya ikut dihitung, diurutin dari omzet terbesar. Sekalian respons /api/sales/today aku rapihin jadi grand_total biar seragam sama laporan. Udah aku tes di laptopku, aman kok." }
+      ],
+      "message": "Bay, tolong review perubahan Fajar (diff-nya ada di lampiran) sebelum aku rilis ke laptop kasir. Cari bug-nya, benerin langsung, tapi jangan sampe yang udah jalan rusak, kasir harus tetap bisa jualan. Catat temuanmu di review/pr-1.md: tiap bug satu poin (file, masalahnya, dampaknya ke kasir, cara kamu benerin).",
+      "lesson": "Review jangan percaya klaim \"udah dites\": cocokin kode sama spesifikasinya kata per kata (zona waktu WIB, batas tanggal inklusif, validasi input), dan cari siapa lagi yang make bagian yang diubah (rename field di API bisa diam-diam ngerusak frontend)."
+    },
+    {
+      "id": "review-2",
+      "agent": "bayu",
+      "base": "kunci/review-1",
+      "apply": "perubahan/pr2-riwayat",
+      "chat": [
+        { "from": "Rani", "text": "Bay, halaman kasir sekarang ada daftar penjualan hari ini plus tombol Batal di tiap baris, biar kasir gak perlu manggil aku tiap salah pencet. Udah aku cek tampilannya rapi di HP sama laptop." }
+      ],
+      "message": "Bay, versi laporan yang udah kamu review udah aku rilis. Sekarang review perubahan Rani (lampiran). Pastiin halaman kasir tetap kebuka dan fitur lama aman. Catat temuanmu di review/pr-2.md, formatnya sama kayak kemarin.",
+      "lesson": "Review frontend: cek tiap selector ada di HTML (satu null bisa matiin seluruh halaman), data dari server gak lewat innerHTML, URL dan method fetch sama persis dengan route server, dan tampilan lain yang kepengaruh (stok) ikut di-refresh."
+    },
+    {
+      "id": "review-3",
+      "agent": "bayu",
+      "base": "kunci/review-2",
+      "apply": "perubahan/pr3-kategori",
+      "chat": [
+        { "from": "Joko", "text": "Bay, aku nambah kategori menu (minuman/makanan) buat laporan nanti. Migrasinya di db/migrations/003-kategori.sql, query produk di server udah aku update biar ngurut per kategori. Roti Bakar = makanan, sisanya minuman." }
+      ],
+      "message": "Bay, terakhir minggu ini: review perubahan Joko (lampiran). Ingat laptop kasir database-nya udah versi 2 dan stoknya udah diisi, jangan sampai ilang. Instalasi baru juga harus jalan. Catat temuanmu di review/pr-3.md.",
+      "lesson": "Review migrasi: jalanin di kepala buat tiga kondisi (database versi lama, versi sekarang berisi data, database baru), cek kolom NOT NULL baru punya DEFAULT, server beneran ngejalanin migrasi yang baru, dan schema.sql ikut naik versi."
+    }
+  ]
+}

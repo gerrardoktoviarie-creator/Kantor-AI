@@ -1,0 +1,122 @@
+=== FILE: db/migrations/003-kategori.sql ===
+BEGIN;
+ALTER TABLE products ADD COLUMN category TEXT CHECK (category IN ('minuman', 'makanan'));
+UPDATE products SET category = 'makanan' WHERE name = 'Roti Bakar Cokelat';
+UPDATE products SET category = 'minuman' WHERE name != 'Roti Bakar Cokelat';
+PRAGMA user_version = 3;
+COMMIT;
+
+=== END FILE ===
+
+=== FILE: db/migrations/004-kategori-nullable.sql ===
+BEGIN;
+ALTER TABLE products ADD COLUMN category_tmp TEXT;
+UPDATE products SET category_tmp = category;
+ALTER TABLE products DROP COLUMN category;
+ALTER TABLE products ADD COLUMN category TEXT;
+UPDATE products SET category = category_tmp;
+ALTER TABLE products DROP COLUMN category_tmp;
+PRAGMA user_version = 4;
+COMMIT;
+
+=== END FILE ===
+
+=== FILE: db/migrations/005-pisah-perubahan-kategori.js ===
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const MIGRATIONS = join(process.cwd(), 'db', 'migrations');
+
+const content = readFileSync(join(MIGRATIONS, '003-kategori.sql'), 'utf8');
+db.exec(`ALTER TABLE products ADD COLUMN category TEXT CHECK (category IN ('minuman', 'makanan'))`);
+db.prepare('UPDATE products SET category = "makanan" WHERE name = "Roti Bakar Cokelat"').run();
+db.prepare('UPDATE products SET category = "minuman" WHERE name != "Roti Bakar Cokelat"').run();
+db.prepare('PRAGMA user_version = 5').run();
+
+=== END FILE ===
+
+=== FILE: db/schema.sql ===
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS products (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  price INTEGER NOT NULL CHECK (price >= 0),
+  stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
+  min_stock INTEGER NOT NULL DEFAULT 5 CHECK (min_stock >= 0),
+  category TEXT CHECK (category IN ('minuman', 'makanan')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sales (
+  id INTEGER PRIMARY KEY,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  qty INTEGER NOT NULL CHECK (qty > 0),
+  total INTEGER NOT NULL CHECK (total >= 0),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS sales_created ON sales (created_at);
+
+INSERT OR IGNORE INTO products (id, name, price) VALUES
+  (1, 'Kopi Susu Gula Aren', 15000),
+  (2, 'Americano', 12000),
+  (3, 'Roti Bakar Cokelat', 18000),
+  (4, 'Teh Tarik', 10000);
+
+PRAGMA user_version = 5;
+
+=== END FILE ===
+
+=== FILE: server.js ===
+import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+const MIGRATIONS = join(ROOT, 'db', 'migrations');
+
+const db = new DatabaseSync(process.env.DB_PATH || join(ROOT, 'data.db'));
+const fresh = !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'products'").get();
+if (fresh) {
+  db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+} else {
+  const version = db.prepare('PRAGMA user_version').get().user_version;
+  if (version < 5) {
+    const hasCategory = db.prepare("SELECT name FROM pragma_table_info('products') WHERE name = 'category'").get();
+    if (!hasCategory) {
+      db.exec(`ALTER TABLE products ADD COLUMN category TEXT CHECK (category IN ('minuman', 'makanan'))`);
+      db.prepare('UPDATE products SET category = "makanan" WHERE name = "Roti Bakar Cokelat"').run();
+      db.prepare('UPDATE products SET category = "minuman" WHERE name != "Roti Bakar Cokelat"').run();
+    }
+    db.prepare('PRAGMA user_version = 5').run();
+  }
+}
+db.exec('PRAGMA foreign_keys = ON');
+
+=== END FILE ===
+
+=== FILE: review/pr-3.md ===
+## Review #3 — Migrasi kategori (Joko)
+
+1. **db/migrations/004-kategori-nullable.sql — DROP NOT NULL langsung tidak jalan di SQLite.** SQLite tidak punya `ALTER COLUMN ... DROP NOT NULL`; perintah itu ditolak dengan "near 'ALTER' syntax error" (DB versi 1) atau "no such column: category" kalau tabel belum punya kolom (DB versi 1). Dampak: server mati pas start. Perbaikan: ulang skema kolom via temp column (ADD temp, copy, DROP, ADD baru, copy back).
+
+2. **db/migrations/005-pisah-perubahan-kategori.js — dieksekusi lewat db.exec(readFileSync(...)), padahal isinya JavaScript.** Syntax error `import` karena JS dianggap SQL. Perbaikan: migrasi ini sekarang cuma SQL langsung (mirip 003) dan dijalankan inline di server.js sesuai versi, tanpa perlu file JS terpisah.
+
+3. **server.js — alur migrasi salah urutan dan bergantung versi yang tidak sinkron.** Kondisi `version < 4` menjalankan 004, lalu `version < 5` mengeksekusi file JS yang syntax-nya JS. Dampak: crash di semua versi DB (1, 2, dan 3). Perbaikan: satukan logika penambahan kolom kategori di satu blok `if (version < 5)` di server.js, cek dulu apakah kolom `category` sudah ada lewat `pragma_table_info` supaya idempoten. Migrasi 005 jadi tidak lagi dieksekusi.
+
+4. **db/migrations/003-kategori.sql — masih `ADD COLUMN category TEXT` tanpa DEFAULT tapi sudah dihapus NOT NULL, jadi aman untuk DB lama.** Migrasi ini tetap dipakai DB versi 1. Tambah kolom TEXT nullable, lalu update kategori. Aman karena kolom boleh NULL dan value semua diisi.
+
+5. **db/schema.sql — user_version sudah dinaikkan ke 5, kolom category sudah ada dengan CHECK, data awal lengkap.** Instalasi baru langsung punya kategori (kategori terisi semua saat insert).
+
+Yang belum dibenerin / perlu dicek:
+- [perlu dicek] Migrasi belum diuji jalannya di ketiga skenario (DB versi 1 kosong, DB versi 2 berisi data, DB baru) karena tidak bisa menjalankan `node server.js`. Harap test manual setelah rilis: restart server dengan data.db laptop kasir, lalu cek `PRAGMA user_version` = 5 dan `SELECT id, category FROM products`.
+
+=== END FILE ===
+
+Laporan ke bos:
+Perbaikan utama ada di `server.js`: migrasi 005 yang syntax-nya JavaScript dipaksa jalan via `db.exec()` adalah penyebab server crash, jadi saya ganti jadi blok SQL langsung di server.js dan jalankan sekali (idempoten, cek dulu kolom `category` ada atau belum). `004-kategori-nullable.sql` saya ulang skemanya lewat kolom temp karena SQLite tidak support `ALTER COLUMN DROP NOT NULL` secara langsung. `003` dan `schema.sql` tetap aman dan sinkron (versi 5). Yang belum teruji jalannya: migrasi di DB versi 1, versi 2 berisi data, dan instalasi baru — harap restart server lalu cek `user_version = 5` dan isi kolom kategori.

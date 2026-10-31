@@ -7,7 +7,7 @@ export async function api(path, { method = 'GET', body } = {}) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new Error('Server Kantor AI gak bisa dihubungi. Masih jalan?');
+    throw new Error('Server RetroGrid gak bisa dihubungi. Masih jalan?');
   }
 
   // Password-protected install (VPS): send the browser to the login page and come back after.

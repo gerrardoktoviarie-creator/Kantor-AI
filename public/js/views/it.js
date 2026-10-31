@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { h, hook, handleSubmit, formatDateTime, formatRelative } from '../dom.js';
+import { createCoachPanel } from '../coach-panel.js';
 
 export function createItView() {
   const projectForm = hook('project-form');
@@ -7,6 +8,7 @@ export function createItView() {
   const projectList = hook('project-list');
   const ideaList = hook('idea-list');
   const dialog = hook('file-dialog');
+  const coach = createCoachPanel({ chips: hook('coach-agents'), body: hook('coach-body') });
   let steps = [];
 
   handleSubmit(projectForm, hook('project-error'), async (values, form) => {
@@ -65,9 +67,14 @@ export function createItView() {
 
   projectList.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const card = event.target.closest('[data-id]');
-    const values = Object.fromEntries(new FormData(event.target));
-    const endpoint = event.target.dataset.hook === 'fix-form' ? 'fix' : 'revise';
+    const form = event.target;
+    const card = form.closest('[data-id]');
+    const values = Object.fromEntries(new FormData(form));
+    if (form.dataset.hook === 'rate-form') {
+      await rateStep(card, form, { step: form.dataset.step, rating: event.submitter?.value, note: values.note });
+      return;
+    }
+    const endpoint = form.dataset.hook === 'fix-form' ? 'fix' : 'revise';
     try {
       await api(`/api/projects/${card.dataset.id}/${endpoint}`, { method: 'POST', body: values });
       await refresh({ force: true });
@@ -75,6 +82,43 @@ export function createItView() {
       window.alert(err.message);
     }
   });
+
+  // Typing a rating note shouldn't get wiped by the next poll.
+  projectList.addEventListener('focusin', (event) => {
+    if (event.target.matches('[data-hook="rate-note"]')) event.target.closest('[data-id]').dataset.editing = 'true';
+  });
+
+  async function rateStep(card, form, body) {
+    const error = form.querySelector('.error-text');
+    error.textContent = '';
+    try {
+      await api(`/api/projects/${card.dataset.id}/rate`, { method: 'POST', body });
+      await refresh({ force: true });
+      const agent = steps.find((s) => s.id === body.step)?.agent;
+      if (agent) await coach.show(agent);
+    } catch (err) {
+      error.textContent = err.message;
+    }
+  }
+
+  function renderRating(project) {
+    return h('section', { class: 'rate', 'aria-label': 'Nilai kerja tim' },
+      h('h3', {}, 'Nilai kerja tim'),
+      h('p', { class: 'panel__hint' }, '"Bagus" disimpan jadi contoh buat agent itu. "Kurang" wajib dikasih catatan, nanti dibaca tiap dia kerja.'),
+      steps.map((step) => {
+        const rated = project.ratings?.[step.id];
+        const noteId = `rate-${project.id}-${step.id}`;
+        return h('form', { class: 'rate__row', dataset: { hook: 'rate-form', step: step.id } },
+          h('span', { class: 'rate__who' }, h('strong', {}, step.label), ` · ${step.name}`),
+          h('label', { class: 'visually-hidden', for: noteId }, `Catatan buat ${step.name}`),
+          h('input', { id: noteId, name: 'note', maxlength: '500', placeholder: 'Catatan (wajib kalau kurang)', dataset: { hook: 'rate-note' } }),
+          h('button', { class: 'btn btn--small rate__up', type: 'submit', value: 'up', 'aria-pressed': String(rated === 'up') }, 'Bagus'),
+          h('button', { class: 'btn btn--small rate__down', type: 'submit', value: 'down', 'aria-pressed': String(rated === 'down') }, 'Kurang'),
+          h('p', { class: 'error-text rate__error', role: 'alert' }),
+        );
+      }),
+    );
+  }
 
   function renderSteps(project) {
     const activeIndex = project.state === 'done' ? steps.length : steps.findIndex((s) => s.id === project.step);
@@ -120,6 +164,7 @@ export function createItView() {
         project.previewUrl && h('a', { class: 'btn', href: project.previewUrl, target: '_blank', rel: 'noopener' }, 'Lihat tampilannya'),
         done && h('button', { class: 'btn', type: 'button', dataset: { action: 'show-revise' } }, 'Minta revisi'),
       ),
+      done && renderRating(project),
       done && project.hasServer && renderRun(project),
       done && h('form', { class: 'inline-form', dataset: { hook: 'revise-form' }, hidden: true },
         h('label', { for: `revise-step-${project.id}` }, 'Bagian yang direvisi'),
@@ -191,5 +236,13 @@ export function createItView() {
     renderIdeas(ideas);
   }
 
-  return { show: () => refresh({ force: true }), hide() {}, refresh };
+  return {
+    async show() {
+      await refresh({ force: true });
+      coach.setTeam([{ agents: steps.map(({ agent, name, role, look }) => ({ id: agent, name, role, look })) }]);
+      await coach.show();
+    },
+    hide() {},
+    refresh,
+  };
 }

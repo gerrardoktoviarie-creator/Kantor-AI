@@ -1,0 +1,250 @@
+=== FILE: db/migrations/003-kategori.sql ===
+BEGIN;
+ALTER TABLE products ADD COLUMN category TEXT DEFAULT 'minuman' CHECK (category IN ('minuman', 'makanan'));
+UPDATE products SET category = 'makanan' WHERE name = 'Roti Bakar Cokelat';
+PRAGMA user_version = 3;
+COMMIT;
+
+=== END FILE ===
+
+=== FILE: db/schema.sql ===
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS products (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  category TEXT NOT NULL DEFAULT 'minuman' CHECK (category IN ('minuman', 'makanan')),
+  price INTEGER NOT NULL CHECK (price >= 0),
+  stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
+  min_stock INTEGER NOT NULL DEFAULT 5 CHECK (min_stock >= 0),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sales (
+  id INTEGER PRIMARY KEY,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  qty INTEGER NOT NULL CHECK (qty > 0),
+  total INTEGER NOT NULL CHECK (total >= 0),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS sales_created ON sales (created_at);
+
+INSERT OR IGNORE INTO products (id, name, price) VALUES
+  (1, 'Kopi Susu Gula Aren', 15000),
+  (2, 'Americano', 12000),
+  (3, 'Roti Bakar Cokelat', 18000),
+  (4, 'Teh Tarik', 10000);
+
+PRAGMA user_version = 3;
+
+=== END FILE ===
+
+=== FILE: public/app.js ===
+const menu = document.querySelector('#menu');
+const message = document.querySelector('#message');
+const todayTotal = document.querySelector('#today-total');
+const history = document.querySelector('#history');
+
+const rupiah = (n) => `Rp${n.toLocaleString('id-ID')}`;
+
+function say(text, isError = false) {
+  message.textContent = text;
+  message.classList.toggle('message--error', isError);
+}
+
+async function loadToday() {
+  const res = await fetch('/api/sales/today');
+  if (!res.ok) throw new Error('Gagal muat penjualan hari ini');
+  const { sales, total } = await res.json();
+  todayTotal.textContent = rupiah(total);
+  history.replaceChildren(...sales.map((s) => {
+    const item = document.createElement('li');
+    const name = document.createElement('span');
+    name.textContent = s.name;
+    const qty = document.createElement('span');
+    qty.textContent = `${s.qty}x`;
+    const total = document.createElement('span');
+    total.textContent = rupiah(s.total);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Batal';
+    button.addEventListener('click', () => cancel(s.id));
+    item.append(name, qty, total, button);
+    return item;
+  }));
+}
+
+async function cancel(saleId) {
+  const res = await fetch(`/api/sales/${saleId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error((await res.json()).error);
+  say('Penjualan dibatalin.');
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+history.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-sale]');
+  if (button) cancel(button.dataset.sale);
+});
+
+async function sell(product) {
+  const res = await fetch('/api/sales', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: product.id, qty: 1 }),
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  say(`${product.name} terjual.`);
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+async function loadMenu() {
+  const res = await fetch('/api/products');
+  if (!res.ok) throw new Error('Gagal muat menu');
+  const products = await res.json();
+  menu.replaceChildren(...products.map((product) => {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    const name = document.createElement('span');
+    name.textContent = product.name;
+    const price = document.createElement('span');
+    price.textContent = rupiah(product.price);
+    const stock = document.createElement('span');
+    stock.textContent = product.low ? `Stok tipis: ${product.stock}` : `Stok ${product.stock}`;
+    button.disabled = product.stock === 0;
+    button.append(name, stock, price);
+    button.addEventListener('click', () => sell(product));
+    item.append(button);
+    return item;
+  }));
+}
+
+try {
+  await Promise.all([loadMenu(), loadToday()]);
+} catch {
+  say('Gak bisa nyambung ke server.', true);
+}
+
+=== END FILE ===
+
+=== FILE: public/style.css ===
+:root {
+  --bg: #fbf7f2;
+  --ink: #2b211b;
+  --accent: #8a4b2a;
+  --muted: #6b5d53;
+  --danger: #a3261b;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.top, main { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+.menu {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.menu button {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+}
+
+.menu button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.history {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+}
+
+.history li span { flex: 1; }
+
+.history li button {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--danger);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.message { color: var(--muted); min-height: 1.5em; }
+.message--error { color: var(--danger); }
+
+=== END FILE ===
+
+=== FILE: review/pr-3.md ===
+# PR-3: Kategori menu (Joko) — Review & Perbaikan
+
+Status: **perlu diverifikasi** (versi bos), bukan final sebelum rilis.
+
+## Temuan
+
+| # | File | Masalah | Dampak ke pengguna | Perbaikan |
+|---|------|---------|--------------------|-----------|
+| 1 | db/migrations/003-kategori.sql | Kolom `category` didefinisikan `NOT NULL` tapi UPDATE-nya tidak mencakup semua baris (update `name != 'Roti Bakar Cokelat'` bisa gagal/ambigu), dan tidak ada DEFAULT. Pada database baru kolom harus diisi saat INSERT. | Migrasi ke versi 3 bisa gagal atau baris baru kehilangan nilai kategori (insert manual / restorasi). | Ganti menjadi `DEFAULT 'minuman'`, hapus update ke-2 yang tidak diperlukan, sisakan update spesifik Roti Bakar. |
+| 2 | db/schema.sql | Skema dasar belum punya kolom `category`, `user_version` masih 2. Instalasi baru dan skema acuan tidak sinkron. | Instalasi baru tidak punya kategori; developer yang buat DB baru dari skema tidak dapat laporan per kategori. | Tambah kolom `category TEXT NOT NULL DEFAULT 'minuman' CHECK (...)`, naikkan `user_version` ke 3. |
+| 3 | db/migrations/002-stok.sql (review, tidak diubah) | Sudah benar: kolom baru `stock`/`min_stock` punya `DEFAULT`, migrasi tidak mengubah skema lama, `user_version` = 2. | — | — |
+| 4 | server.js | Query produk dan urutan (ORDER BY category, name) sudah sesuai diff Joko. | — | Tidak diubah; validasi tetap. |
+| 5 | public/app.js / public/index.html (review, tidak diubah) | Selector `#menu`, `#history`, `#message`, `#today-total` semua ada di HTML; semua data dirender via `createElement`/`textContent`, tidak ada `innerHTML`; endpoint batal `/api/sales/{id}` sudah benar; `loadMenu()` dipanggil ulang setelah batal sehingga stok menu ikut update. | — | Tidak diubah. |
+
+## Alur migrasi (ditelusuri di kepala)
+
+- **Database versi lama (user_version < 2):** migrasi 002 jalan dulu (stock + min_stock, DEFAULT), lalu 003 jalan (category DEFAULT 'minuman', Roti Bakar jadi 'makanan'), `user_version` = 3. Aman, tidak menghapus data.
+- **Database versi 2 (berisi data asli di laptop kasir):** kolom `category` baru punya `DEFAULT`, jadi baris yang sudah ada langsung dapat nilai tanpa UPDATE massal; Roti Bakar dipaksa 'makanan'. Tidak ada perubahan data penjualan/stok.
+- **Database baru:** skema sudah bawa kolom category, INSERT OR IGNORE produk awal langsung punya nilai. `user_version` = 3.
+
+## Catatan rilis (untuk non-teknis)
+
+- **Yang berubah:** menu dipisah jadi kategori *minuman* dan *makanan*. Roti Bakar Cokelat = makanan, sisa menu = minuman. Ini belum dipakai fitur kasir saat ini (hanya penataan data + persiapan laporan).
+- **Langkah update:** jalankan `node server.js` biasa; server akan naikkan migrasi otomatis. **Backup dulu** file `data.db` sebelum update.
+- **Risiko:** migrasi menambah satu kolom saja, tidak mengubah data penjualan/stok yang sudah ada. Risiko rendah; rollback berarti kembalikan backup `data.db`.
+
+## Yang belum dibenerin / perlu dicek
+
+- Tidak ada file CSS khusus kategori di proyek; pengelompokan per kategori belum tampil di UI (hanya tersimpan di DB dan urutan query). Ini scope Joko selanjutnya, bukan bug.
+- Perlu dicek tampilan langsung di HP kasir setelah server di-upgrade (sama seperti review sebelumnya).
+- `package.json` tidak berubah; tidak ada dependensi baru.
+
+Verdict: **Approved after fix** — kolom NOT NULL baru sudah punya DEFAULT, migrasi hanya menambah kolom (tidak mengubah data), dan server mengurut produk per kategori.
+
+---
+
+**Laporan ke bos:**
+
+Migrasi kategori Joko saya benerin: kolom `category` sekarang punya `DEFAULT 'minuman'` di skema dan di migrasi (dari yang sebelumnya `NOT NULL` tanpa nilai pasti), jadi database versi lama, yang udah isi data, dan installasi baru semuanya aman tanpa ngubah data penjualan/stok — migrasi cuma nambah kolom. `db/schema.sql` dan `db/migrations/003-kategori.sql` udah sinkron, `user_version` naik ke 3. Frontend (app.js, index.html, style.css) gak saya ubah karena selector, render tanpa innerHTML, endpoint batal `/api/sales/{id}`, dan refresh stok setelah batal udah benar. Perlu dicek tampilannya langsung di HP kasir, dan fitur pengelompokan per kategori di UI masih belum ada (itu scope Joko selanjutnya).

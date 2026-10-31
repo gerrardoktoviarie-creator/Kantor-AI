@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -27,6 +28,10 @@ export const LLM = {
   key: env.LLM_KEY || '',
   // Free models on 9router can take minutes on long prompts; anything shorter kills good runs.
   timeoutMs: Number(env.LLM_TIMEOUT_MS) || 6 * 60 * 1000,
+  // A stronger model for some seats, e.g. LLM_AGENT_MODELS=bayu=try/free/deepseek-v4-pro-0813,joko=...
+  agentModels: Object.fromEntries((env.LLM_AGENT_MODELS || '').split(',')
+    .map((pair) => pair.split('=').map((s) => s.trim()))
+    .filter(([agent, model]) => agent && model)),
 };
 
 export const GOOGLE = {
@@ -36,6 +41,12 @@ export const GOOGLE = {
 };
 
 export const FFMPEG_PATH = env.FFMPEG_PATH || '';
+
+// Skill folders agents can borrow from: Claude Code's and Hermes'. Missing folders just list nothing.
+export const SKILL_SOURCES = [
+  { id: 'claude', label: 'Claude Code', dir: env.CLAUDE_SKILLS_DIR || join(homedir(), '.claude', 'skills') },
+  { id: 'hermes', label: 'Hermes', dir: env.HERMES_SKILLS_DIR || join(env.LOCALAPPDATA || join(homedir(), '.local', 'share'), 'hermes', 'skills') },
+];
 
 // Where the office "is" for prayer times. Defaults to Jakarta (WIB).
 export const PRAYER = {

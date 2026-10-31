@@ -1,4 +1,4 @@
-# Referensi Desain Kantor AI
+# Referensi Desain RetroGrid
 
 Buka `index.html` (dobel-klik), atau lewat server di http://localhost:4100/design-reference/.
 

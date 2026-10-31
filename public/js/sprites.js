@@ -1,8 +1,37 @@
 const OUTLINE = '#1b1626';
-const PANTS = '#2b2d42';
-const SHOE = '#14151f';
+// Denim rather than near-black, so legs still read against dark wood and marble.
+const PANTS = '#3f5680';
+const SHOE = '#2b2321';
 const EYE = '#1b1626';
 const DEFAULT_SKIN = '#f1c27d';
+
+// The shirt is the one bold colour on a person. Very dark or washed-out shirts vanish on the
+// office floors, so lightness and saturation are pulled into a readable band; the hue stays,
+// so everyone keeps their own colour.
+function vivid(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) / 255;
+  const g = ((n >> 8) & 0xff) / 255;
+  const b = (n & 0xff) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  const l = (max + min) / 2;
+  const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+  let h = 0;
+  if (d) h = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  // Only dark shirts change. They are lifted on a slope rather than to one level, so a petrol
+  // shirt still reads darker than an ocean-blue one; greys stay grey.
+  if (l >= 0.5) return hex;
+  const S = s > 0.25 ? Math.max(0.5, s) : s;
+  const L = 0.34 + l * 0.6;
+  const c = (1 - Math.abs(2 * L - 1)) * S;
+  const x = c * (1 - Math.abs((h % 2) - 1));
+  const m = L - c / 2;
+  const [r1, g1, b1] = h < 1 ? [c, x, 0] : h < 2 ? [x, c, 0] : h < 3 ? [0, c, x] : h < 4 ? [0, x, c] : h < 5 ? [x, 0, c] : [c, 0, x];
+  const out = (v) => Math.round((v + m) * 255);
+  return `#${((out(r1) << 16) | (out(g1) << 8) | out(b1)).toString(16).padStart(6, '0')}`;
+}
 
 function tint(hex, amount) {
   const n = parseInt(hex.slice(1), 16);
@@ -48,12 +77,13 @@ function headwear(part, look, back) {
  * Draws a 12x26 pixel person whose feet sit at (x, y). Coordinates are in art pixels.
  * pose: stand | sit | rukuk | sujud | swim. `back` turns them away from the viewer.
  * look: { hair, shirt, skin?, style?: short | long | bun | spiky | hijab | peci, glasses? }
+ * rim: a light colour traced around the outline, so the person stands out from a busy floor.
  */
-export function drawPerson(ctx, x, y, look, { frame = 0, sitting = false, pose = sitting ? 'sit' : 'stand', back = false } = {}) {
+export function drawPerson(ctx, x, y, look, { frame = 0, sitting = false, pose = sitting ? 'sit' : 'stand', back = false, rim = null } = {}) {
   const parts = [];
   const part = (dx, dy, w, h, color, outlined = false) => parts.push({ dx, dy, w, h, color, outlined });
   const skin = look.skin ?? DEFAULT_SKIN;
-  const shirt = look.shirt;
+  const shirt = vivid(look.shirt);
   const shirtShade = tint(shirt, -38);
 
   ctx.fillStyle = 'rgb(0 0 0 / 0.22)';
@@ -122,7 +152,13 @@ export function drawPerson(ctx, x, y, look, { frame = 0, sitting = false, pose =
     }
   }
 
-  // Outlines first, so every part's fill sits on a 1px dark border.
+  if (rim) {
+    ctx.fillStyle = rim;
+    for (const p of parts) {
+      if (p.outlined) ctx.fillRect(Math.round(x + p.dx - 2), Math.round(y + p.dy - 2), p.w + 4, p.h + 4);
+    }
+  }
+  // Outlines next, so every part's fill sits on a 1px dark border.
   ctx.fillStyle = OUTLINE;
   for (const p of parts) {
     if (p.outlined) ctx.fillRect(Math.round(x + p.dx - 1), Math.round(y + p.dy - 1), p.w + 2, p.h + 2);

@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { h, hook } from './dom.js';
+import { avatarCanvas } from './sprites.js';
 import { createSetupView } from './views/setup.js';
 import { createOfficeView } from './views/office.js';
 import { createContentView } from './views/content.js';
@@ -9,6 +10,7 @@ import { createTugasView } from './views/tugas.js';
 import { createUsageView } from './views/usage.js';
 import { createMarketingView } from './views/marketing.js';
 import { createStockView } from './views/stock.js';
+import { createTeamView } from './views/team.js';
 
 const POLL_MS = 4000;
 const nav = hook('nav');
@@ -23,15 +25,41 @@ const views = {
   tugas: createTugasView(),
   iklan: createMarketingView(),
   stok: createStockView(),
+  latih: createTeamView(),
   pemakaian: createUsageView(),
 };
 
 let active = null;
 let enabled = [];
+let crewKey = '';
+
+// The people who work on a page stand on its header rule, drawn from the office data.
+function renderCrews(divisions) {
+  const key = JSON.stringify(divisions.map((d) => [d.id, d.agents.map((a) => a.id)]));
+  if (key === crewKey) return;
+  crewKey = key;
+  for (const slot of document.querySelectorAll('[data-crew]')) {
+    const division = divisions.find((d) => d.id === slot.dataset.crew);
+    slot.replaceChildren(...(division?.agents ?? []).map((agent) => {
+      const avatar = avatarCanvas(agent.look);
+      avatar.title = `${agent.name} · ${agent.role}`;
+      return avatar;
+    }));
+  }
+}
+
+const HEALTH_TEXT = {
+  up: '9router nyala',
+  checking: 'Ngecek 9router…',
+  slow: '9router lambat banget, agent nunggu',
+  error: '9router nolak permintaan, cek API key',
+  down: '9router mati, agent gak bisa kerja',
+};
 
 function renderChrome(office) {
   hook('business-name').textContent = office.business.name ?? '';
   enabled = office.divisions.map((d) => d.id);
+  renderCrews(office.divisions);
   for (const link of nav.querySelectorAll('[data-division]')) {
     link.hidden = !enabled.includes(link.dataset.division);
   }
@@ -42,9 +70,10 @@ function renderChrome(office) {
   badge.hidden = waiting === 0;
   badge.textContent = String(waiting);
 
+  const status = HEALTH_TEXT[office.health.ok ? 'up' : office.health.state] ?? HEALTH_TEXT.down;
   health.replaceChildren(
-    h('span', { class: `dot ${office.health.ok ? 'dot--ok' : 'dot--bad'}` }),
-    h('span', {}, office.health.ok ? `9router nyala · model ${office.health.model}` : '9router mati, agent gak bisa kerja'),
+    h('span', { class: `dot ${office.health.ok ? 'dot--ok' : office.health.state === 'checking' ? '' : 'dot--bad'}` }),
+    h('span', {}, office.health.ok ? `${status} · model ${office.health.model}` : status),
   );
 }
 

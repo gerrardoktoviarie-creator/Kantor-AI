@@ -48,15 +48,15 @@ export function createTugasView() {
       type: 'button',
       dataset: { action: 'hermes-toggle' },
       disabled: !hermes.telegram,
-    }, hermes.using ? 'Balik ke bot Kantor AI' : 'Pakai bot Hermes');
+    }, hermes.using ? 'Balik ke bot RetroGrid' : 'Pakai bot Hermes');
     const skill = h('button', {
       class: 'btn btn--small',
       type: 'button',
       dataset: { action: 'hermes-skill' },
       disabled: hermes.skillInstalled,
-    }, hermes.skillInstalled ? 'Skill Kantor AI udah di Hermes' : 'Pasang skill Kantor AI ke Hermes');
-    let about = 'Hermes ketemu di laptop ini. Pesan Kantor AI bisa dikirim lewat bot Hermes, jadi cukup satu bot.';
-    if (hermes.using) about = `Pesan Kantor AI dikirim lewat bot Hermes ke ${hermes.chat.name}.`;
+    }, hermes.skillInstalled ? 'Skill RetroGrid udah di Hermes' : 'Pasang skill RetroGrid ke Hermes');
+    let about = 'Hermes ketemu di laptop ini. Pesan RetroGrid bisa dikirim lewat bot Hermes, jadi cukup satu bot.';
+    if (hermes.using) about = `Pesan RetroGrid dikirim lewat bot Hermes ke ${hermes.chat.name}.`;
     if (!hermes.telegram) about = 'Hermes ketemu, tapi token bot atau chat utamanya belum diisi di .env Hermes.';
     return h('div', { class: 'hermes' },
       h('h3', {}, 'Hermes'),
@@ -75,7 +75,7 @@ export function createTugasView() {
         h('ol', { class: 'steps-guide' },
           h('li', {}, 'Di Telegram, buka ', h('strong', {}, '@BotFather'), ', kirim /newbot, kasih nama bebas.'),
           h('li', {}, 'Salin token yang dikasih BotFather ke file .env di folder kantor-ai: ', h('span', { class: 'code' }, 'TELEGRAM_BOT_TOKEN=tokennya')),
-          h('li', {}, 'Restart Kantor AI, lalu balik ke sini.'),
+          h('li', {}, 'Restart RetroGrid, lalu balik ke sini.'),
         ),
         h('p', { class: 'panel__hint' }, 'Token itu kunci bot kamu, jangan dibagi ke siapa-siapa.'),
         hermesSection(hermes),
@@ -114,7 +114,7 @@ export function createTugasView() {
         const { fresh } = await api('/api/classroom/sync', { method: 'POST' });
         status.textContent = fresh ? `${fresh} tugas baru masuk, Mira lagi ngecek.` : 'Gak ada tugas baru.';
       }
-      if (button.dataset.action === 'classroom-disconnect' && window.confirm('Putuskan akun Google dari Kantor AI?')) {
+      if (button.dataset.action === 'classroom-disconnect' && window.confirm('Putuskan akun Google dari RetroGrid?')) {
         await api('/api/classroom/disconnect', { method: 'POST' });
       }
       await refresh();

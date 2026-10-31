@@ -1,0 +1,1 @@
+{ "agent": "joko", "title": "Skema toko gagal dijalankan dan datanya bisa ngaco", "lesson": "Skema harus bisa dijalankan berkali-kali (IF NOT EXISTS, INSERT OR IGNORE), aktifkan PRAGMA foreign_keys, uang INTEGER, dan pakai CHECK/NOT NULL biar database sendiri yang nolak data ngaco." }

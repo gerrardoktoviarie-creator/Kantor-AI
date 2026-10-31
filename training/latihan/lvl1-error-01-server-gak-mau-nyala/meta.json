@@ -1,0 +1,1 @@
+{ "agent": "bayu", "title": "Server langsung mati pas dinyalain", "lesson": "Sebelum benerin, baca baris pertama error di log. Proyek dengan \"type\": \"module\" wajib pakai import, bukan require." }

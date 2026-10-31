@@ -2,17 +2,19 @@
 export const ROOM_W = 8;
 export const ROOM_H = 7;
 
+// Warm wood and stone with one navy accent, after a top-down pixel office the owner picked:
+// wood-panelled offices, grey tile where the machines are, a dark marble corridor between.
 export const THEMES = {
-  lobby: { floor: 'marble', wall: '#b9c4d6', label: 'Lobby' },
-  sosmed: { floor: 'wood', wall: '#9b7fb8' },
-  it: { floor: 'carpetBlue', wall: '#5f7fa6' },
-  tugas: { floor: 'woodLight', wall: '#7f9a6a' },
-  marketing: { floor: 'wood', wall: '#c4705c' },
-  admin: { floor: 'tileGrey', wall: '#8d99ae' },
-  rapat: { floor: 'carpetPurple', wall: '#6d5a8b', walls: 'glass', label: 'Ruang rapat' },
-  pantry: { floor: 'checker', wall: '#b08f5f', label: 'Pantry' },
-  musala: { floor: 'prayer', wall: '#e3d5b5', label: 'Musala', windows: false },
-  kolam: { floor: 'deck', wall: '#d9dee4', walls: 'railing', label: 'Kolam' },
+  lobby: { floor: 'woodDark', wall: '#9a6a46', label: 'Lobby' },
+  sosmed: { floor: 'wood', wall: '#b88d67' },
+  it: { floor: 'tileGrey', wall: '#8e939a' },
+  tugas: { floor: 'woodLight', wall: '#a98463' },
+  marketing: { floor: 'wood', wall: '#a8765a' },
+  admin: { floor: 'tileGrey', wall: '#9a958c' },
+  rapat: { floor: 'wood', wall: '#8f6a4c', walls: 'glass', label: 'Ruang rapat' },
+  pantry: { floor: 'woodLight', wall: '#c2a585', label: 'Pantry' },
+  musala: { floor: 'prayer', wall: '#d9caa6', label: 'Musala', windows: false },
+  kolam: { floor: 'deck', wall: '#d9d4c8', walls: 'railing', label: 'Kolam' },
 };
 
 // Picked in the setup wizard. Each style only overrides floors and wall colours;
@@ -20,17 +22,18 @@ export const THEMES = {
 const STYLES = {
   modern: {},
   hangat: {
-    floor: { lobby: 'wood', it: 'woodLight', admin: 'woodLight', rapat: 'wood' },
+    floor: { lobby: 'wood', it: 'woodLight', admin: 'woodLight' },
     wall: {
-      lobby: '#c9a27e', sosmed: '#b5838d', it: '#8d7b68', tugas: '#a3b18a',
-      marketing: '#c97b63', admin: '#a68a64', rapat: '#9c6644', pantry: '#bc8a5f',
+      lobby: '#b58457', sosmed: '#c49a72', it: '#a88a6a', tugas: '#b89a74',
+      marketing: '#b88462', admin: '#a88f70', rapat: '#9c6e48', pantry: '#c9a77c',
     },
   },
+  // Walnut panelling and darker boards; the machine rooms keep their grey tile.
   mewah: {
-    floor: { sosmed: 'marble', it: 'carpetPurple', tugas: 'wood', marketing: 'marble', admin: 'carpetBlue', pantry: 'marble' },
+    floor: { sosmed: 'woodDark', tugas: 'wood', marketing: 'woodDark', pantry: 'marble', rapat: 'woodDark' },
     wall: {
-      lobby: '#2f3e5c', sosmed: '#3d405b', it: '#283d5c', tugas: '#344e41',
-      marketing: '#5c3d46', admin: '#3b4252', rapat: '#2b2d42', pantry: '#4a4e69',
+      lobby: '#6b4a33', sosmed: '#7a5a3f', it: '#6e737b', tugas: '#7c5d42',
+      marketing: '#734f39', admin: '#76716a', rapat: '#5e4230', pantry: '#8e7458',
     },
   },
 };
@@ -77,7 +80,8 @@ export function furnishRoom(room, agents) {
   };
   const plant = (tx, ty, tall = true) => add('plant', tx, ty, { tall });
 
-  room.doors = { top: 2, left: 2 };
+  // Rooms are walled on all four sides; the doors open onto the corridors below and to the right.
+  room.doors = { bottom: 3, right: 3 };
 
   switch (room.id) {
     case 'lobby': {
@@ -87,7 +91,7 @@ export function furnishRoom(room, agents) {
       const builder = agents[0];
       items.push({ type: 'chair', x: x + 4, y: y + 1, shadow: false });
       seats.set(builder.id, { x: x + 4, y: y + 1 });
-      add('rug', x + 1, y + 4, { w: 3, d: 2, color: '#8a3b34' }, false);
+      add('rug', x + 1, y + 4, { w: 3, d: 2, color: '#2f3d5e' }, false);
       add('coffeeTable', x + 1.6, y + 4.3, { w: 1.6, d: 0.6 });
       add('sofa', x + 1, y + 5.2, { w: 2, d: 0.75, color: 'leather' }, false);
       spots.sofa.push({ x: x + 1, y: y + 5 }, { x: x + 2, y: y + 5 });
@@ -114,7 +118,6 @@ export function furnishRoom(room, agents) {
       break;
     }
     case 'pantry': {
-      room.doors.top = 5;
       decals.push({ wall: 'left', at: 4, type: 'poster', color: '#5ec4b6' }, { wall: 'left', at: 5, type: 'painting' });
       add('counter', x, y, { w: 4, d: 0.8 });
       add('coffee', x + 1.2, y + 0.2, {}, false);
@@ -150,6 +153,8 @@ export function furnishRoom(room, agents) {
       break;
     }
     case 'kolam': {
+      // The loungers run along the bottom row, so the door sits past them.
+      room.doors.bottom = 5;
       pools.push({ type: 'pool', x: x + 1, y: y + 1, w: 5, d: 3 });
       block(x + 1, y + 1, 5, 3);
       // Swim spots sit on the pool's edge tiles so agents can step straight in from the deck.
@@ -197,7 +202,7 @@ function furnishDivision(room, { add, plant, decals, spots }) {
     decals.push({ wall: 'left', at: 4, type: 'whiteboard' }, { wall: 'left', at: 5, type: 'painting' });
     add('bookshelf', x + 3, y + 0.05, { w: 2, d: 0.6 });
     add('bookshelf', x + 5, y + 0.05, { w: 2, d: 0.6 });
-    add('rug', x + 1, y + 4, { w: 3, d: 2, color: '#4a6b8a' }, false);
+    add('rug', x + 1, y + 4, { w: 3, d: 2, color: '#4f6178' }, false);
     add('beanbag', x + 5, y + 4, {}, false);
     spots.chill.push({ x: x + 5, y: y + 4 });
     add('lamp', x + 6, y + 4);
@@ -207,6 +212,8 @@ function furnishDivision(room, { add, plant, decals, spots }) {
     spots.sofa.push({ x: x + 1, y: y + 5 }, { x: x + 2, y: y + 5 });
     plant(x + 7, y + 6);
   } else if (room.id === 'admin') {
+    // Shelving lines the right wall up to row 4.
+    room.doors.right = 5;
     decals.push({ wall: 'top', at: 4, type: 'whiteboard' }, { wall: 'left', at: 5, type: 'clock' });
     add('shelving', x + 7.05, y + 1.1, { w: 0.9, d: 0.8 });
     add('shelving', x + 7.05, y + 3.1, { w: 0.9, d: 0.8 });

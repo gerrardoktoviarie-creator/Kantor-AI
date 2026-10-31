@@ -13,6 +13,61 @@ export function createClipsView() {
   const progress = hook('upload-progress');
   const error = hook('upload-error');
   const list = hook('video-list');
+  const songForm = hook('song-form');
+  const songList = hook('song-list');
+  let songs = [];
+
+  songForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const file = songForm.elements.file.files[0];
+    const songError = hook('song-error');
+    const songProgress = hook('song-progress');
+    if (!file) {
+      songError.textContent = 'Pilih file lagunya dulu.';
+      return;
+    }
+    const button = event.submitter;
+    button.disabled = true;
+    songError.textContent = '';
+    songProgress.hidden = false;
+    songProgress.value = 0;
+    try {
+      await uploadFile(`/api/songs?name=${encodeURIComponent(file.name)}`, file, (pct) => {
+        songProgress.value = pct;
+      });
+      songForm.reset();
+      await refresh({ force: true });
+    } catch (err) {
+      songError.textContent = err.message;
+    } finally {
+      button.disabled = false;
+      songProgress.hidden = true;
+    }
+  });
+
+  songList.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-action="delete-song"]');
+    if (!button || !window.confirm('Hapus lagu ini? Klip yang udah jadi tetap pakai lagunya.')) return;
+    try {
+      await api(`/api/songs/${button.dataset.id}`, { method: 'DELETE' });
+      await refresh({ force: true });
+    } catch (err) {
+      window.alert(err.message);
+    }
+  });
+
+  function renderSongs() {
+    songList.replaceChildren(...(songs.length
+      ? songs.map((song) => h('li', { class: 'song' },
+        h('div', { class: 'task__line' },
+          h('strong', {}, song.name),
+          h('span', { class: 'badge' }, formatSeconds(song.duration ?? 0)),
+        ),
+        h('audio', { src: song.url, controls: true, preload: 'none' }),
+        h('button', { class: 'btn btn--small btn--danger', type: 'button', dataset: { action: 'delete-song', id: song.id } }, 'Hapus'),
+      ))
+      : [h('li', { class: 'muted' }, 'Belum ada lagu.')]));
+  }
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -93,7 +148,15 @@ export function createClipsView() {
     try {
       await api(`/api/videos/${card.dataset.id}/clips`, {
         method: 'POST',
-        body: { ...values, start: Number(values.start), end: Number(values.end), subtitles: values.subtitles === 'on' },
+        body: {
+          ...values,
+          start: Number(values.start),
+          end: Number(values.end),
+          subtitles: values.subtitles === 'on',
+          songId: values.songId || null,
+          songVolume: Number(values.songVolume),
+          songStart: Number(values.songStart || 0),
+        },
       });
       delete card.dataset.editing;
       await refresh({ force: true });
@@ -123,6 +186,22 @@ export function createClipsView() {
   list.addEventListener('focusin', (event) => {
     const card = event.target.closest('[data-id]');
     if (card && event.target.matches('input, select')) card.dataset.editing = 'true';
+  });
+
+  // Song options only matter once a song is picked; replacing the sound defaults to full volume.
+  list.addEventListener('change', (event) => {
+    const cut = event.target.closest('[data-hook="cut-form"]');
+    if (!cut) return;
+    if (event.target.name === 'songId') cut.querySelector('[data-hook="song-options"]').hidden = !event.target.value;
+    if (event.target.name === 'songMode') {
+      cut.elements.songVolume.value = event.target.value === 'replace' ? '100' : '30';
+      cut.elements.songVolume.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+
+  list.addEventListener('input', (event) => {
+    if (event.target.name !== 'songVolume') return;
+    event.target.closest('form').querySelector('[data-hook="volume-value"]').textContent = `${event.target.value}%`;
   });
 
   function renderVideo(video) {
@@ -202,8 +281,38 @@ export function createClipsView() {
           h('input', { type: 'checkbox', name: 'subtitles', checked: true }),
           ' Tempel subtitle (gaya TikTok, kata yang diucapin jadi kuning)')
         : h('p', { class: 'panel__hint' }, 'Subtitle gak tersedia: video ini belum ada transkripnya.'),
+      renderSongPicker(id),
       h('p', { class: 'error-text', role: 'alert' }),
       h('button', { class: 'btn btn--primary', type: 'submit' }, 'Suruh Dimas potong'),
+    );
+  }
+
+  function renderSongPicker(id) {
+    if (!songs.length) return h('p', { class: 'panel__hint' }, 'Mau pakai lagu latar? Upload lagunya dulu di panel Lagu latar.');
+    return h('fieldset', { class: 'field song-picker' },
+      h('legend', {}, 'Lagu latar'),
+      h('label', { class: 'visually-hidden', for: `cut-song-${id}` }, 'Pilih lagu'),
+      h('select', { id: `cut-song-${id}`, name: 'songId' },
+        h('option', { value: '' }, 'Tanpa lagu'),
+        songs.map((song) => h('option', { value: String(song.id) }, `${song.name} (${formatSeconds(song.duration ?? 0)})`)),
+      ),
+      h('div', { class: 'field field--row', dataset: { hook: 'song-options' }, hidden: true },
+        h('div', { class: 'field' },
+          h('label', { for: `cut-song-mode-${id}` }, 'Suara video'),
+          h('select', { id: `cut-song-mode-${id}`, name: 'songMode' },
+            h('option', { value: 'mix' }, 'Tetap ada, lagu di belakang'),
+            h('option', { value: 'replace' }, 'Diganti lagu'),
+          ),
+        ),
+        h('div', { class: 'field' },
+          h('label', { for: `cut-song-volume-${id}` }, 'Volume lagu ', h('span', { dataset: { hook: 'volume-value' } }, '30%')),
+          h('input', { id: `cut-song-volume-${id}`, name: 'songVolume', type: 'range', min: '0', max: '100', step: '5', value: '30' }),
+        ),
+        h('div', { class: 'field' },
+          h('label', { for: `cut-song-start-${id}` }, 'Lagu mulai dari (detik)'),
+          h('input', { id: `cut-song-start-${id}`, name: 'songStart', type: 'number', min: '0', step: '0.5', inputmode: 'decimal', value: '0' }),
+        ),
+      ),
     );
   }
 
@@ -214,6 +323,7 @@ export function createClipsView() {
       h('div', { class: 'form' },
         h('strong', {}, clip.title),
         h('span', { class: 'muted' }, `${formatSeconds(clip.start)} – ${formatSeconds(clip.end)} · ${clip.layout === 'vertical' ? '9:16' : 'ukuran asli'}${clip.subtitles ? ' · subtitle' : ''}`),
+        clip.song && h('span', { class: 'muted' }, `Lagu: ${clip.song.name} · ${clip.song.mode === 'replace' ? 'ganti suara' : 'dicampur'} ${clip.song.volume}%`),
         h('span', { class: `badge ${tone}` }, label),
         clip.url && h('a', { class: 'btn btn--small', href: clip.url, download: `${clip.title}.mp4` }, 'Download'),
       ),
@@ -222,9 +332,11 @@ export function createClipsView() {
 
   async function refresh({ force = false } = {}) {
     if (!force && list.querySelector('[data-editing]')) return;
-    // Re-rendering would restart any playing video.
-    if (!force && [...list.querySelectorAll('video')].some((v) => !v.paused)) return;
-    const videos = await api('/api/videos');
+    // Re-rendering would restart any playing video or song.
+    if (!force && [...list.querySelectorAll('video'), ...songList.querySelectorAll('audio')].some((m) => !m.paused)) return;
+    const [videos, songRows] = await Promise.all([api('/api/videos'), api('/api/songs')]);
+    songs = songRows;
+    renderSongs();
     list.replaceChildren(...(videos.length
       ? videos.map(renderVideo)
       : [h('li', { class: 'empty' }, 'Belum ada video. Upload video panjang (podcast, live, vlog) di atas.')]));

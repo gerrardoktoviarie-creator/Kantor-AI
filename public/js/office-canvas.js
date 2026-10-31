@@ -1,9 +1,12 @@
-import { drawPerson } from './sprites.js';
+import { createSpriteAtlas } from './sprite-atlas.js';
 import { currentPrayer, salatPose } from './prayer-clock.js';
-import { TW, TH, WALL, MIMBAR_H, createArt } from './office-art.js';
+import { TILE, ZK, WALL_FACE, MIMBAR_H, createArt } from './office-art.js';
+import { ISO, isoCorner, isoWorldBox } from './iso.js';
 import { ROOM_W, ROOM_H, emptySpots, furnishRoom, themeFor } from './office-rooms.js';
 
-const GAP = 1;
+// Corridor widths in tiles. Rows need the wider gap: each room's back wall stands up into it.
+const GAP_X = 1;
+const GAP_Y = 2;
 const SPEED = 2.2;
 const WUDHU_MS = 2500;
 const DEBATE_LINE_MS = 3500;
@@ -46,10 +49,12 @@ const LOBBY_DEBATES = [
 ];
 
 // Same palette as the app's CSS tokens (canvas can't read custom properties cheaply every frame).
-const INK = '#0f1923';
-const PAPER = '#ece8e1';
-const RED = '#ff4655';
+const INK = '#18191d';
+const PAPER = '#ece4d4';
+const BRASS = '#c98f4e';
 const AMBER = '#f5c451';
+const PERSON_SCALE = 1.2;
+const STAFF_RIM = 'rgb(255 246 228 / 0.8)';
 const NAME_FONT = '"Barlow", system-ui, sans-serif';
 const LABEL_FONT = '"Barlow Condensed", "Barlow", system-ui, sans-serif';
 
@@ -58,11 +63,10 @@ const isNight = () => {
   return hour >= 19 || hour < 6;
 };
 
+const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 export function createOffice(canvas, { onSelect }) {
   const ctx = canvas.getContext('2d');
-  // Canvas text never triggers a webfont download, so ask for the faces it uses up front.
-  document.fonts?.load(`700 12px ${LABEL_FONT}`);
-  document.fonts?.load(`600 12px ${NAME_FONT}`);
+  document.fonts?.load(`700 14px ${LABEL_FONT}`);
   let rooms = [];
   let items = [];
   let pools = [];
@@ -74,6 +78,8 @@ export function createOffice(canvas, { onSelect }) {
   let selected = null;
   let origin = { x: 0, y: 0 };
   let world = { w: 0, h: 0 };
+  // Screen-space bounds of the iso diamond, filled in by layout(); the camera fits to this.
+  let worldBox = { left: 0, top: 0, width: 1, height: 1 };
   let scale = 2;
   let baseScale = 1;
   let offset = { x: 0, y: 0 };
@@ -89,34 +95,37 @@ export function createOffice(canvas, { onSelect }) {
   let floorCache = null;
   const taken = new Map();
 
-  const corner = (tx, ty) => ({
-    x: (tx - ty) * (TW / 2) + origin.x,
-    y: (tx + ty) * (TH / 2) + origin.y,
-  });
+  // Tile grid -> isometric screen px. Everything above this line (sim, pathfinding, depths)
+  // stays in tile units; only this mapper knows about the projection.
+  const corner = isoCorner(origin);
   const key = (t) => `${t.x},${t.y}`;
   const art = createArt(ctx, corner);
+  const spriteAtlas = createSpriteAtlas();
 
   function layout(divisions, builder, look) {
     const theme = (id) => themeFor(id, look.style);
     const specs = [
       { id: 'lobby', ...theme('lobby'), agents: [builder] },
       ...divisions.map((d) => ({ id: d.id, ...theme(d.id), label: d.room, agents: d.agents })),
-      ...look.facilities.map((id) => ({ id, ...theme(id), agents: [] })),
+      ...look.facilities.map((id) => ({ id, ...theme(id), label: theme(id).label ?? ({ rapat: 'Ruang rapat', pantry: 'Pantry', musala: 'Musala', kolam: 'Kolam' }[id] ?? id), agents: [] })),
     ];
-    const columns = specs.length > 9 ? 4 : 3;
+    const columns = bestColumns(specs.length);
 
+    // Corridors run along the top and left too, so every room has walkways on all sides.
     rooms = specs.map((spec, i) => ({
       ...spec,
-      x: (i % columns) * (ROOM_W + GAP),
-      y: Math.floor(i / columns) * (ROOM_H + GAP),
+      x: GAP_X + (i % columns) * (ROOM_W + GAP_X),
+      y: GAP_Y + Math.floor(i / columns) * (ROOM_H + GAP_Y),
       w: ROOM_W,
       h: ROOM_H,
     }));
 
     const rows = Math.ceil(rooms.length / columns);
-    grid = { w: columns * (ROOM_W + GAP), h: rows * (ROOM_H + GAP) };
-    world = { w: (grid.w + grid.h) * (TW / 2) + 8, h: (grid.w + grid.h) * (TH / 2) + WALL + 24 };
-    origin = { x: grid.h * (TW / 2) + 4, y: WALL + 16 };
+    grid = { w: GAP_X + columns * (ROOM_W + GAP_X), h: GAP_Y + rows * (ROOM_H + GAP_Y) };
+    origin = { x: 4, y: 4 };
+    worldBox = isoWorldBox(grid, origin, 8);
+    // `world` keeps its old role as a size pair for fit math; in iso it is the bounding box.
+    world = { w: worldBox.width, h: worldBox.height };
 
     items = [];
     pools = [];
@@ -159,19 +168,36 @@ export function createOffice(canvas, { onSelect }) {
     resize();
   }
 
-  // Walls are on each room's back (top and left) edges; crossing them is only allowed at the door.
-  function wallBetween(a, b) {
-    for (const room of rooms) {
-      if (a.x === b.x && a.x >= room.x && a.x < room.x + room.w) {
-        const crossesTop = (a.y === room.y - 1 && b.y === room.y) || (b.y === room.y - 1 && a.y === room.y);
-        if (crossesTop && a.x !== room.x + room.doors.top) return true;
-      }
-      if (a.y === b.y && a.y >= room.y && a.y < room.y + room.h) {
-        const crossesLeft = (a.x === room.x - 1 && b.x === room.x) || (b.x === room.x - 1 && a.x === room.x);
-        if (crossesLeft && a.y !== room.y + room.doors.left) return true;
-      }
+  // The column count that shows the office biggest in the canvas it has right now.
+  function bestColumns(count) {
+    measureInsets();
+    const width = canvas.clientWidth || 1200;
+    const height = (canvas.clientHeight || 700) - frameInsets.top - frameInsets.bottom;
+    let best = { columns: 3, fit: 0 };
+    for (let columns = 2; columns <= Math.min(count, 6); columns++) {
+      const rows = Math.ceil(count / columns);
+      const g = { w: GAP_X + columns * (ROOM_W + GAP_X), h: GAP_Y + rows * (ROOM_H + GAP_Y) };
+      const box = isoWorldBox(g, { x: 4, y: 4 }, 8);
+      const fit = Math.min(width / box.width, height / box.height);
+      if (fit > best.fit) best = { columns, fit };
     }
-    return false;
+    return best.columns;
+  }
+
+  const roomOfTile = (t) => rooms.find((r) => t.x >= r.x && t.x < r.x + r.w && t.y >= r.y && t.y < r.y + r.h) ?? null;
+
+  // Every room is walled on all four sides; the only ways through are its two doors.
+  function wallBetween(a, b) {
+    const ra = roomOfTile(a);
+    const rb = roomOfTile(b);
+    if (ra === rb) return false;
+    // Rooms never touch, so one side of a crossing is always corridor.
+    const room = ra ?? rb;
+    const inside = ra ? a : b;
+    const outside = ra ? b : a;
+    const bottomDoor = inside.x === room.x + room.doors.bottom && inside.y === room.y + room.h - 1 && outside.y === room.y + room.h;
+    const rightDoor = inside.y === room.y + room.doors.right && inside.x === room.x + room.w - 1 && outside.x === room.x + room.w;
+    return !(bottomDoor || rightDoor);
   }
 
   function findPath(from, to) {
@@ -329,8 +355,8 @@ export function createOffice(canvas, { onSelect }) {
       const dy = ty - person.y;
       const dist = Math.hypot(dx, dy);
       const move = SPEED * dt;
-      // Walking "up" the screen means walking away from the viewer.
-      person.back = dx + dy < 0;
+      // Walking up the screen means walking away from the viewer.
+      if (Math.abs(dy) > 0.01) person.back = dy < 0;
       if (dist <= move) {
         person.x = tx;
         person.y = ty;
@@ -345,75 +371,157 @@ export function createOffice(canvas, { onSelect }) {
     }
   }
 
-  // The canvas fills its box; at zoom 1 the whole office fits inside it, centered.
+  // On wide screens the toolbars float over the canvas, so the office is framed between them
+  // instead of hiding its top row of room names under the chips.
+  let frameInsets = { top: 0, bottom: 0 };
+  function measureInsets() {
+    const floating = (selector) => {
+      const el = canvas.parentElement?.querySelector(selector);
+      return el && getComputedStyle(el).position === 'absolute' ? el.getBoundingClientRect().height + 12 : 0;
+    };
+    frameInsets = { top: floating('.office__hud--top'), bottom: floating('.office__hud--bottom') };
+  }
+
+  const view = () => {
+    const height = canvas.clientHeight - frameInsets.top - frameInsets.bottom;
+    return { width: canvas.clientWidth, height, cx: canvas.clientWidth / 2, cy: frameInsets.top + height / 2 };
+  };
+
   function resize() {
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
-    if (!width || !height || !world.w) return;
+    if (!width || !height) return;
+    measureInsets();
     const dpr = window.devicePixelRatio || 1;
-    baseScale = Math.min(width / world.w, height / world.h);
+    baseScale = Math.min(width / world.w, view().height / world.h);
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
+    floorCache = null;
     applyCamera();
   }
 
   function applyCamera() {
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
-    camera.center ??= { x: world.w / 2, y: world.h / 2 };
-    camera.center.x = Math.min(world.w, Math.max(0, camera.center.x));
-    camera.center.y = Math.min(world.h, Math.max(0, camera.center.y));
+    const { width, height, cx, cy } = view();
+    camera.center ??= { x: worldBox.left + worldBox.width / 2, y: worldBox.top + worldBox.height / 2 };
     scale = baseScale * camera.zoom;
-    offset = { x: width / 2 - camera.center.x * scale, y: height / 2 - camera.center.y * scale };
+    // Device-pixel snapping keeps upscaled pixels crisp instead of straddling two device px.
+    const dpr = window.devicePixelRatio || 1;
+    const snap = (value) => Math.round(value * scale * dpr) / (scale * dpr);
+    const keep = (value, lo, hi, span) => {
+      const half = span / 2 / scale;
+      const size = hi - lo;
+      return size <= half * 2 ? lo + size / 2 : Math.min(hi - half, Math.max(lo + half, value));
+    };
+    camera.center.x = keep(camera.center.x, worldBox.left, worldBox.left + worldBox.width, width);
+    camera.center.y = keep(camera.center.y, worldBox.top, worldBox.top + worldBox.height, height);
+    offset = { x: snap(cx - camera.center.x * scale), y: snap(cy - camera.center.y * scale) };
+    canvas.style.cursor = drag?.moved ? 'grabbing' : camera.zoom > 1 ? 'grab' : 'pointer';
+    canvas.style.touchAction = camera.zoom > 1 ? 'none' : 'pan-y';
   }
 
   function setCamera(zoom, center, { animate = false } = {}) {
     const next = { zoom: Math.min(MAX_ZOOM, Math.max(1, zoom)), center: { ...center } };
-    if (animate) {
+    if (animate && !prefersReducedMotion()) {
       camera.target = next;
       return;
     }
     camera.target = null;
     camera.zoom = next.zoom;
     camera.center = next.center;
+    floorCache = null;
     applyCamera();
   }
 
-  // Eases the camera towards a room picked from the chips.
+  // The center that keeps `anchor` (a world point) under screen point (px, py) at this zoom.
+  const centerFor = (anchor, zoom) => ({
+    x: anchor.x - (anchor.px - view().cx) / (baseScale * zoom),
+    y: anchor.y - (anchor.py - view().cy) / (baseScale * zoom),
+  });
+
+  // Eases the camera towards its target: a room picked from the chips, or a wheel zoom that
+  // keeps the point under the cursor where it is the whole way.
   function stepCamera() {
     const t = camera.target;
     if (!t) return;
-    camera.zoom += (t.zoom - camera.zoom) * 0.18;
-    camera.center.x += (t.center.x - camera.center.x) * 0.18;
-    camera.center.y += (t.center.y - camera.center.y) * 0.18;
-    if (Math.abs(t.zoom - camera.zoom) < 0.005 && Math.hypot(t.center.x - camera.center.x, t.center.y - camera.center.y) < 0.5) {
+    if (!t.anchor) {
+      camera.zoom += (t.zoom - camera.zoom) * 0.18;
+      camera.center.x += (t.center.x - camera.center.x) * 0.18;
+      camera.center.y += (t.center.y - camera.center.y) * 0.18;
+      if (Math.abs(t.zoom - camera.zoom) < 0.005 && Math.hypot(t.center.x - camera.center.x, t.center.y - camera.center.y) < 0.5) {
+        camera.zoom = t.zoom;
+        camera.center = { ...t.center };
+        camera.target = null;
+        floorCache = null;
+      }
+      applyCamera();
+      return;
+    }
+    const previousZoom = camera.zoom;
+    camera.zoom += (t.zoom - camera.zoom) * 0.3;
+    if (Math.abs(t.zoom - camera.zoom) < 0.002) {
       camera.zoom = t.zoom;
-      camera.center = { ...t.center };
       camera.target = null;
     }
+    if (Math.abs(previousZoom - camera.zoom) > 0.08 || !camera.target) floorCache = null;
+    camera.center = centerFor(t.anchor, camera.zoom);
     applyCamera();
   }
 
-  function zoomAt(factor, px, py) {
-    const point = { x: (px - offset.x) / scale, y: (py - offset.y) / scale };
-    const zoom = Math.min(MAX_ZOOM, Math.max(1, camera.zoom * factor));
-    const next = baseScale * zoom;
-    setCamera(zoom, {
-      x: point.x - (px - canvas.clientWidth / 2) / next,
-      y: point.y - (py - canvas.clientHeight / 2) / next,
-    });
+  // Wheel steps ease in; pinches follow the fingers directly. Quick wheel turns stack onto a
+  // zoom that is still easing, so three notches really mean three notches.
+  function zoomAt(factor, px, py, { smooth = true } = {}) {
+    const from = camera.target?.anchor ? camera.target.zoom : camera.zoom;
+    const zoom = Math.min(MAX_ZOOM, Math.max(1, from * factor));
+    const anchor = { x: (px - offset.x) / scale, y: (py - offset.y) / scale, px, py };
+    if (smooth && !prefersReducedMotion()) {
+      camera.target = { zoom, anchor };
+      return;
+    }
+    camera.target = null;
+    camera.zoom = zoom;
+    camera.center = centerFor(anchor, zoom);
+    floorCache = null;
+    applyCamera();
+  }
+
+  function pan(dx, dy) {
+    camera.target = null;
+    camera.center = { x: camera.center.x + dx / scale, y: camera.center.y + dy / scale };
+    applyCamera();
+  }
+
+  // Screen rect covering a room's floor diamond and the standing back wall above it.
+  // The lit area of a room: its floor diamond plus the wall slab standing on the two far
+  // edges. Traced as one polygon so night mode can cut it out with evenodd and fill it warm.
+  function isoRoomPolygon(room) {
+    const n = corner(room.x, room.y);
+    const e = corner(room.x + room.w, room.y);
+    const s = corner(room.x + room.w, room.y + room.h);
+    const w = corner(room.x, room.y + room.h);
+    const lift = WALL_FACE * ZK * 1.5;
+    return [
+      { x: w.x, y: w.y }, { x: n.x, y: n.y - lift }, { x: e.x, y: e.y - lift },
+      { x: s.x, y: s.y },
+    ];
+  }
+
+  function traceIsoRoom(ctx, room) {
+    const pts = isoRoomPolygon(room);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
   }
 
   function roomView(roomId) {
     const room = rooms.find((r) => r.id === roomId);
-    if (!room) return { zoom: 1, center: { x: world.w / 2, y: world.h / 2 } };
+    if (!room) return { zoom: 1, center: { x: worldBox.left + worldBox.width / 2, y: worldBox.top + worldBox.height / 2 } };
     const points = [corner(room.x, room.y), corner(room.x + room.w, room.y), corner(room.x + room.w, room.y + room.h), corner(room.x, room.y + room.h)];
     const minX = Math.min(...points.map((p) => p.x));
     const maxX = Math.max(...points.map((p) => p.x));
-    const minY = Math.min(...points.map((p) => p.y)) - WALL - 20;
+    const minY = Math.min(...points.map((p) => p.y)) - WALL_FACE - 20;
     const maxY = Math.max(...points.map((p) => p.y)) + 8;
-    const zoom = 0.9 * Math.min(canvas.clientWidth / ((maxX - minX) * baseScale), canvas.clientHeight / ((maxY - minY) * baseScale));
-    return { zoom, center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 } };
+    const zoom = 0.92 * Math.min(view().width / ((maxX - minX) * baseScale), view().height / ((maxY - minY) * baseScale));
+    return { zoom: Math.min(MAX_ZOOM, Math.max(1, zoom)), center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 } };
   }
 
   const dim = (roomId) => (!focusRoom || focusRoom === roomId ? 1 : 0.3);
@@ -427,11 +535,12 @@ export function createOffice(canvas, { onSelect }) {
   // in world space and only redrawn when the zoom level changes.
   function buildFloorCache(cacheScale) {
     const layer = document.createElement('canvas');
-    layer.width = Math.ceil(world.w * cacheScale);
-    layer.height = Math.ceil(world.h * cacheScale);
+    layer.width = Math.ceil(worldBox.width * cacheScale);
+    layer.height = Math.ceil(worldBox.height * cacheScale);
     const lctx = layer.getContext('2d');
     const floorArt = createArt(lctx, corner);
-    lctx.setTransform(cacheScale, 0, 0, cacheScale, 0, 0);
+    // Cache space puts the world's left/top corner at (0, 0).
+    lctx.setTransform(cacheScale, 0, 0, cacheScale, -worldBox.left * cacheScale, -worldBox.top * cacheScale);
 
     lctx.globalAlpha = focusRoom ? 0.3 : 1;
     for (let tx = 0; tx < grid.w; tx++) {
@@ -447,18 +556,12 @@ export function createOffice(canvas, { onSelect }) {
       lctx.globalAlpha = dim(it.room);
       if (it.shadow !== false && it.type !== 'chandelier') floorArt.floorDetail(it);
     }
+    // Side and front partitions are low and never change, so they live here too.
+    for (const room of rooms) {
+      lctx.globalAlpha = dim(room.id);
+      floorArt.partitions(room);
+    }
     floorCache = { canvas: layer, scale: cacheScale, builtAt: performance.now() };
-  }
-
-  function wallSegments(room) {
-    const segments = [];
-    for (let i = 0; i < room.w; i++) {
-      segments.push({ depth: room.x + i + 0.5 + room.y, x0: room.x + i, y0: room.y, x1: room.x + i + 1, y1: room.y, bx: 0, by: -0.12, isTop: true, index: i });
-    }
-    for (let i = 0; i < room.h; i++) {
-      segments.push({ depth: room.x + room.y + i + 0.5, x0: room.x, y0: room.y + i, x1: room.x, y1: room.y + i + 1, bx: -0.12, by: 0, isTop: false, index: i });
-    }
-    return segments;
   }
 
   function personPose(person, prayer, settled) {
@@ -487,7 +590,11 @@ export function createOffice(canvas, { onSelect }) {
     const wanted = Math.min(MAX_CACHE_SCALE, scale * dpr);
     if (!floorCache || (floorCache.scale !== wanted && now - floorCache.builtAt > 150)) buildFloorCache(wanted);
     ctx.imageSmoothingEnabled = floorCache.scale !== wanted;
-    ctx.drawImage(floorCache.canvas, offset.x * dpr, offset.y * dpr, world.w * scale * dpr, world.h * scale * dpr);
+    // The cache holds the world starting at worldBox.left/top; map that corner into place.
+    ctx.drawImage(floorCache.canvas,
+      (offset.x + worldBox.left * (1 - scale)) * dpr,
+      (offset.y + worldBox.top * (1 - scale)) * dpr,
+      worldBox.width * scale * dpr, worldBox.height * scale * dpr);
 
     worldTransform(ctx);
     ctx.imageSmoothingEnabled = false;
@@ -497,12 +604,10 @@ export function createOffice(canvas, { onSelect }) {
       art.pool(it, now);
     }
 
-    // Everything with height goes through one depth sort: wall tiles, furniture, people.
+    // Everything with height goes through one sort, back to front: walls, furniture, people.
     const drawables = [];
     for (const room of rooms) {
-      for (const segment of wallSegments(room)) {
-        drawables.push({ depth: segment.depth, room: room.id, draw: () => art.wall(room, segment, night, now) });
-      }
+      drawables.push({ depth: room.y - 0.01, room: room.id, draw: () => art.backWall(room, night, now) });
     }
     const busyRooms = new Set([...people.values()]
       .filter((p) => p.status?.state === 'working' && p.seat)
@@ -510,15 +615,15 @@ export function createOffice(canvas, { onSelect }) {
     for (const it of items) {
       if (it.type === 'rug') continue;
       const busy = it.owner ? people.get(it.owner)?.status?.state === 'working' : busyRooms.has(it.room);
-      const depth = it.type === 'chandelier' ? it.x + it.y + 2 : it.x + (it.w ?? 1) + it.y + (it.d ?? 1) - 0.05;
+      const depth = it.y + (it.d ?? 1) - 0.05;
       drawables.push({ depth, room: it.room, draw: () => art.item(it, { busy, night, now }) });
     }
     for (const person of people.values()) {
-      drawables.push({ depth: person.x + person.y + 0.55, room: roomAt(person.x, person.y), person });
+      drawables.push({ depth: person.y + 0.05, room: roomAt(person.x, person.y), person });
     }
     const khatib = prayer?.jumatan ? khatibSpot(prayer) : null;
     if (khatib) {
-      drawables.push({ depth: khatib.x + khatib.y + 1.2, room: 'musala', draw: () => drawKhatib(khatib, prayer) });
+      drawables.push({ depth: khatib.y + 0.7, room: 'musala', draw: () => drawKhatib(khatib, prayer) });
     }
     drawables.sort((a, b) => a.depth - b.depth);
 
@@ -535,8 +640,14 @@ export function createOffice(canvas, { onSelect }) {
       const { pose, back, praying } = personPose(person, prayer, settled);
       const bob = person.status?.state === 'working' && pose === 'sit' ? Math.round(Math.sin(now / 180)) : 0;
       const sink = pose === 'swim' ? 4 : 0;
-      drawPerson(ctx, p.x, p.y + bob + sink, person.look, { frame: settled ? 0 : person.frame, pose, back });
-      hitboxes.push({ id: person.id, x: p.x, y: p.y - 14, alpha: ctx.globalAlpha, settled, praying });
+      if (person.status?.state === 'waiting' || person.status?.state === 'error') {
+        const color = person.status.state === 'waiting' ? AMBER : '#ef6f6c';
+        ctx.fillStyle = color;
+        ctx.fillRect(Math.round(p.x - 2), Math.round(p.y - 27), 5, 5);
+      }
+      drawStaff(p.x, p.y + bob + sink, person.look, { frame: settled ? 0 : person.frame, pose, back });
+      // hitbox y uses person height at base scale (16*PERSON_SCALE)
+      hitboxes.push({ id: person.id, x: p.x, y: p.y - 14 * PERSON_SCALE, alpha: ctx.globalAlpha, settled, praying });
     }
     ctx.globalAlpha = 1;
 
@@ -545,10 +656,25 @@ export function createOffice(canvas, { onSelect }) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  // Night: dim everything, then add warm light back where lamps and busy screens are.
+  // Night: the corridors go dark while every room keeps its ceiling lights on, evenly. Glow
+  // blobs over whole rooms washed the pixel art out and left unlit rooms looking dead.
   function drawNight() {
-    ctx.fillStyle = 'rgb(10 14 40 / 0.34)';
-    ctx.fillRect(-offset.x / scale, -offset.y / scale, canvas.width / scale, canvas.height / scale);
+    const full = [-offset.x / scale, -offset.y / scale, canvas.width / scale, canvas.height / scale];
+    // Each room lights up as its floor diamond plus the wall slab standing on the far edges.
+    ctx.beginPath();
+    ctx.rect(...full);
+    for (const room of rooms) traceIsoRoom(ctx, room);
+    ctx.fillStyle = 'rgb(8 10 28 / 0.45)';
+    ctx.fill('evenodd');
+    ctx.save();
+    ctx.beginPath();
+    for (const room of rooms) traceIsoRoom(ctx, room);
+    ctx.clip();
+    ctx.fillStyle = 'rgb(255 214 150 / 0.05)';
+    ctx.fillRect(...full);
+    ctx.restore();
+
+    // Lamps and busy screens: a small, tight pool of light, not a haze across the room.
     ctx.globalCompositeOperation = 'lighter';
     const glow = (x, y, z, radius, color) => {
       const p = art.at(x, y, z);
@@ -559,13 +685,23 @@ export function createOffice(canvas, { onSelect }) {
       ctx.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
     };
     for (const it of items) {
-      if (it.type === 'lamp') glow(it.x + 0.5, it.y + 0.5, 26, 46, 'rgb(255 200 110 / 0.35)');
-      if (it.type === 'chandelier') glow(it.x + 0.5, it.y + 0.5, WALL - 8, 60, 'rgb(255 210 130 / 0.3)');
+      if (it.type === 'lamp') glow(it.x + 0.5, it.y + 0.5, 26, 16, 'rgb(255 205 120 / 0.28)');
       if (it.type === 'desk' && people.get(it.owner)?.status?.state === 'working') {
-        glow(it.x + 0.4, it.y + 0.2, 20, 24, 'rgb(90 220 200 / 0.3)');
+        glow(it.x + 0.4, it.y + 0.2, 20, 12, 'rgb(90 220 200 / 0.25)');
       }
     }
+    // Someone crossing a dark corridor still needs to be seen.
+    for (const person of people.values()) {
+      if (!roomAt(person.x, person.y)) glow(person.x, person.y, 24, 14, 'rgb(255 236 205 / 0.2)');
+    }
     ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // Staff are drawn a touch larger than the furniture scale suggests and with a light rim,
+  // so they stay readable on dark wood and marble, the way pixel games outline their characters.
+  function drawStaff(x, y, look, options) {
+    // x, y are screen px where feet land (bottom-center)
+    spriteAtlas.draw(ctx, x, y, look, { ...options, rim: STAFF_RIM });
   }
 
   // Where the Friday khatib stands: on the mimbar for the khutbah, then at the front as imam.
@@ -577,83 +713,69 @@ export function createOffice(canvas, { onSelect }) {
   function drawKhatib(spot, prayer) {
     const p = corner(spot.x, spot.y);
     const pose = prayer.phase === 'salat' ? salatPose(prayer) : 'stand';
-    drawPerson(ctx, p.x, p.y - (spot.raised ? MIMBAR_H : 0), OWNER.look, { pose, back: prayer.phase === 'salat' });
+    drawStaff(p.x, p.y - (spot.raised ? MIMBAR_H * ZK : 0), OWNER.look, { pose, back: prayer.phase === 'salat' });
   }
 
   function drawLabels(now, prayer, khatib) {
     const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, offset.x * dpr, offset.y * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const textPx = Math.round(Math.min(16, Math.max(11, scale * 4.4)));
-    const nameFont = `700 ${textPx}px ${NAME_FONT}`;
-    const tagFont = `600 ${textPx - 1}px ${NAME_FONT}`;
 
     for (const room of rooms) {
-      const p = corner(room.x + room.w / 2, room.y);
+      // The nameplate floats over the wall side of the room's diamond.
+      const p = corner(room.x + room.w / 2, room.y - 0.5);
+      const lift = (room.walls === 'railing' ? 10 * ZK : WALL_FACE) + 12;
+      const x = offset.x + p.x * scale;
+      const y = offset.y + (p.y - lift) * scale;
+      ctx.save();
       ctx.globalAlpha = dim(room.id);
-      ctx.font = `700 ${textPx + 1}px ${LABEL_FONT}`;
-      // Open rooms only have a low railing, so their label sits just above it.
-      const lift = room.walls === 'railing' ? 20 : WALL + 8;
-      plate(room.label.toUpperCase(), p.x * scale, (p.y - lift) * scale);
+      ctx.font = `700 13px ${LABEL_FONT}`;
+      plate(room.label.toUpperCase(), x, y);
+      ctx.restore();
     }
 
-    // Zoomed far out (a phone showing the whole office) every card would overlap the next one,
-    // so only "needs you" markers stay; picking a room zooms in and brings the rest back.
-    const compact = scale < 1;
+    const compact = scale < 0.6;
     for (const hit of hitboxes) {
       const person = people.get(hit.id);
-      ctx.globalAlpha = hit.alpha;
-      const x = hit.x * scale;
-      const y = hit.y * scale;
+      if (!person) continue;
+      const x = offset.x + hit.x * scale;
+      const y = offset.y + hit.y * scale;
+      const state = person.status?.state ?? 'idle';
       if (compact) {
-        ctx.font = tagFont;
-        if (person.status?.state === 'waiting') pill('!', x, y - 10 * scale, AMBER, '#2a1d00');
+        if (state === 'waiting' || state === 'error') pill('!', x, y - 14, state === 'waiting' ? AMBER : '#ef6f6c', INK);
         continue;
       }
-      // A saf of name tags is unreadable; names come back after salat or when you pick someone.
-      if (!hit.praying || hit.id === selected) {
-        ctx.font = nameFont;
-        ctx.fillStyle = hit.id === selected ? RED : '#ffffff';
-        ctx.strokeStyle = 'rgb(15 25 35 / 0.8)';
-        ctx.lineWidth = 3;
-        ctx.strokeText(person.name, x, y + 22 * scale);
-        ctx.fillText(person.name, x, y + 22 * scale);
-      }
-
-      const state = person.status?.state ?? 'idle';
-      ctx.font = tagFont;
+      if (hit.praying && hit.id !== selected) continue;
+      ctx.save();
+      ctx.globalAlpha = hit.alpha;
+      const namePx = 12;
+      ctx.font = `700 ${namePx}px ${NAME_FONT}`;
+      ctx.fillStyle = hit.id === selected ? AMBER : '#ffffff';
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 3;
+      ctx.strokeText(person.name, x, y + 22 * scale);
+      ctx.fillText(person.name, x, y + 22 * scale);
       const said = hit.settled ? speech(person, now) : null;
-      if (said != null) {
-        if (said) bubble(said, x, y - 8 * scale, state === 'meeting' ? STATUS_DOT.meeting : null);
-      } else if (state !== 'idle' && person.status?.text) {
-        // A card over their head with what they're on right now.
-        const text = truncate(person.status.text, 28);
-        if (state === 'waiting') pill(`! ${text}`, x, y - 16 * scale, AMBER, '#2a1d00');
-        else tag(text, x, y - 16 * scale, STATUS_DOT[state] ?? '#9ba6c2');
-      } else if (person.activity && hit.settled && !['salat', 'imam', 'debat'].includes(person.activity)) {
-        // Chat partners take turns "talking" so the pair reads as a conversation.
-        const talking = person.activity !== 'ngobrol' || Math.floor(now / 1500) % 2 === (person.id < person.partner ? 0 : 1);
-        if (talking) pill(person.activity === 'ngobrol' ? '…' : person.activity, x, y - 14 * scale, 'rgb(236 232 225 / 0.94)', INK);
+      const activity = person.activity && hit.settled && !['salat', 'imam', 'debat'].includes(person.activity)
+        ? (person.activity === 'ngobrol' ? '…' : person.activity) : null;
+      const text = said || (state !== 'idle' && state !== 'working' ? person.status?.text : null) || activity;
+      if (text) {
+        ctx.font = `600 ${Math.max(9, namePx - 1)}px ${NAME_FONT}`;
+        pill(truncate(text, 24), x, y - 14 * scale, state === 'waiting' ? AMBER : PAPER, INK);
       }
+      ctx.restore();
     }
 
     if (khatib) {
-      ctx.globalAlpha = dim('musala');
       const p = corner(khatib.x, khatib.y);
-      const x = p.x * scale;
-      const y = (p.y - (khatib.raised ? MIMBAR_H : 0) - 14) * scale;
-      const name = `${OWNER.name} · khatib`;
-      ctx.font = nameFont;
+      ctx.font = `700 10px ${NAME_FONT}`;
       ctx.fillStyle = AMBER;
-      ctx.strokeStyle = 'rgb(15 25 35 / 0.8)';
+      ctx.strokeStyle = INK;
       ctx.lineWidth = 3;
-      ctx.strokeText(name, x, y + 22 * scale);
-      ctx.fillText(name, x, y + 22 * scale);
-      if (prayer.phase === 'khutbah') {
-        ctx.font = tagFont;
-        pill(KHUTBAH_LINES[Math.floor(now / 6000) % KHUTBAH_LINES.length], x, y - 16 * scale, 'rgb(236 232 225 / 0.96)', INK);
-      }
+      ctx.strokeText('Kamu · khatib', offset.x + p.x * scale, offset.y + (p.y + 22) * scale);
+      ctx.fillText('Kamu · khatib', offset.x + p.x * scale, offset.y + (p.y + 22) * scale);
     }
     ctx.globalAlpha = 1;
   }
@@ -704,7 +826,7 @@ export function createOffice(canvas, { onSelect }) {
     const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 18;
     const h = lines.length * lineH + 10;
     const top = y - h - 6;
-    ctx.fillStyle = 'rgb(15 25 35 / 0.3)';
+    ctx.fillStyle = 'rgb(24 25 29 / 0.3)';
     ctx.beginPath();
     ctx.roundRect(x - w / 2 + 1, top + 2, w, h, 3);
     ctx.fill();
@@ -735,12 +857,12 @@ export function createOffice(canvas, { onSelect }) {
     ctx.fillText(text, x, y + 0.5);
   }
 
-  // Room name plate: dark slab with a red edge, like a callout on a map.
+  // Room name plate: dark slab with a brass edge, like a door sign.
   function plate(text, x, y) {
     const w = ctx.measureText(text).width + 22;
     const h = fontPx() + 9;
     const left = x - w / 2;
-    ctx.fillStyle = 'rgb(15 25 35 / 0.9)';
+    ctx.fillStyle = 'rgb(24 25 29 / 0.9)';
     ctx.beginPath();
     ctx.moveTo(left, y - h / 2);
     ctx.lineTo(left + w, y - h / 2);
@@ -748,7 +870,7 @@ export function createOffice(canvas, { onSelect }) {
     ctx.lineTo(left + w - 5, y + h / 2);
     ctx.lineTo(left, y + h / 2);
     ctx.fill();
-    ctx.fillStyle = RED;
+    ctx.fillStyle = BRASS;
     ctx.fillRect(left, y - h / 2, 3, h);
     ctx.fillStyle = PAPER;
     ctx.fillText(text, x + 2, y + 1);
@@ -760,7 +882,7 @@ export function createOffice(canvas, { onSelect }) {
     const w = ctx.measureText(text).width + 18;
     const h = size + 9;
     const left = x - w / 2;
-    ctx.fillStyle = 'rgb(15 25 35 / 0.3)';
+    ctx.fillStyle = 'rgb(24 25 29 / 0.3)';
     ctx.fillRect(left + 1, y - h / 2 + 2, w, h);
     ctx.fillStyle = PAPER;
     ctx.fillRect(left, y - h / 2, w, h);
@@ -789,35 +911,68 @@ export function createOffice(canvas, { onSelect }) {
 
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.clientHeight : 1;
+    const delta = event.deltaY * unit;
+    const step = event.ctrlKey || Math.abs(delta) < 45 ? 1.25 : 1.5;
     const rect = canvas.getBoundingClientRect();
-    zoomAt(event.deltaY < 0 ? 1.15 : 1 / 1.15, event.clientX - rect.left, event.clientY - rect.top);
+    zoomAt(delta < 0 ? step : 1 / step, event.clientX - rect.left, event.clientY - rect.top);
   }, { passive: false });
+
+  // Touch and pen can put two pointers down; mouse never does.
+  const pointers = new Map();
+  let pinch = null;
+  const spread = () => {
+    const [a, b] = [...pointers.values()];
+    return { dist: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
 
   canvas.addEventListener('pointerdown', (event) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size === 2) {
+      pinch = spread();
+      if (drag) drag.moved = true;
+      return;
+    }
     drag = { x: event.clientX, y: event.clientY, moved: false };
   });
 
   canvas.addEventListener('pointermove', (event) => {
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinch && pointers.size === 2) {
+      const now = spread();
+      const rect = canvas.getBoundingClientRect();
+      zoomAt(now.dist / pinch.dist, now.x - rect.left, now.y - rect.top, { smooth: false });
+      pan(pinch.x - now.x, pinch.y - now.y);
+      pinch = now;
+      return;
+    }
     if (!drag || camera.zoom <= 1) return;
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     drag.moved = true;
     canvas.setPointerCapture(event.pointerId);
-    setCamera(camera.zoom, { x: camera.center.x - dx / scale, y: camera.center.y - dy / scale });
+    pan(-dx, -dy);
     drag.x = event.clientX;
     drag.y = event.clientY;
   });
 
-  canvas.addEventListener('pointerup', () => {
+  const release = (event) => {
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size) return;
     // Let the click that follows a drag know it was a drag, then forget it.
     setTimeout(() => {
       drag = null;
+      applyCamera();
     });
-  });
+  };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
 
-  canvas.addEventListener('dblclick', () => setCamera(1, { x: world.w / 2, y: world.h / 2 }, { animate: true }));
+  canvas.addEventListener('dblclick', () => setCamera(1, { x: worldBox.left + worldBox.width / 2, y: worldBox.top + worldBox.height / 2 }, { animate: true }));
 
   canvas.addEventListener('click', (event) => {
     if (drag?.moved) return;
@@ -867,7 +1022,7 @@ export function createOffice(canvas, { onSelect }) {
       setCamera(view.zoom, view.center, { animate: true });
     },
     zoomBy(factor) {
-      zoomAt(factor, canvas.clientWidth / 2, canvas.clientHeight / 2);
+      zoomAt(factor, view().cx, view().cy);
     },
     select(id) {
       selected = id;

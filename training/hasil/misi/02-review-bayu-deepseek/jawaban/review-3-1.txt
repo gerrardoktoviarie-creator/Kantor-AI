@@ -1,0 +1,439 @@
+=== FILE: db/migrations/003-kategori.sql ===
+BEGIN;
+ALTER TABLE products ADD COLUMN category TEXT CHECK (category IN ('minuman', 'makanan'));
+UPDATE products SET category = 'makanan' WHERE name = 'Roti Bakar Cokelat';
+UPDATE products SET category = 'minuman' WHERE name != 'Roti Bakar Cokelat';
+PRAGMA user_version = 3;
+COMMIT;
+
+=== END FILE ===
+
+=== FILE: db/schema.sql ===
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS products (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  price INTEGER NOT NULL CHECK (price >= 0),
+  stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
+  min_stock INTEGER NOT NULL DEFAULT 5 CHECK (min_stock >= 0),
+  category TEXT CHECK (category IN ('minuman', 'makanan')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sales (
+  id INTEGER PRIMARY KEY,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  qty INTEGER NOT NULL CHECK (qty > 0),
+  total INTEGER NOT NULL CHECK (total >= 0),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS sales_created ON sales (created_at);
+
+INSERT OR IGNORE INTO products (id, name, price) VALUES
+  (1, 'Kopi Susu Gula Aren', 15000),
+  (2, 'Americano', 12000),
+  (3, 'Roti Bakar Cokelat', 18000),
+  (4, 'Teh Tarik', 10000);
+
+PRAGMA user_version = 3;
+
+=== END FILE ===
+
+=== FILE: db/migrations/004-kategori-nullable.sql ===
+BEGIN;
+ALTER TABLE products ALTER COLUMN category DROP NOT NULL;
+PRAGMA user_version = 4;
+COMMIT;
+
+=== END FILE ===
+
+=== FILE: server.js ===
+import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+
+const db = new DatabaseSync(process.env.DB_PATH || join(ROOT, 'data.db'));
+const fresh = !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'products'").get();
+if (fresh) db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+else if (db.prepare('PRAGMA user_version').get().user_version < 2) {
+  db.exec(readFileSync(join(ROOT, 'db', 'migrations', '002-stok.sql'), 'utf8'));
+}
+db.exec('PRAGMA foreign_keys = ON');
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+const PRODUCT = 'SELECT id, name, category, price, stock, min_stock, stock <= min_stock AS low FROM products';
+const toProduct = (p) => p && { ...p, low: Boolean(p.low) };
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  try { return raw ? JSON.parse(raw) : {}; } catch { return null; }
+}
+
+async function serveStatic(pathname, res) {
+  const file = normalize(join(PUBLIC, pathname === '/' ? 'index.html' : pathname));
+  if (!file.startsWith(PUBLIC + sep)) return sendJson(res, 404, { error: 'Gak ketemu.' });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  }
+}
+
+const server = createServer(async (req, res) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  try {
+    if (req.method === 'GET' && pathname === '/api/products') {
+      return sendJson(res, 200, db.prepare(`${PRODUCT} ORDER BY category, name`).all().map(toProduct));
+    }
+    const restock = pathname.match(/^\/api\/products\/(\d+)\/restock$/);
+    if (req.method === 'POST' && restock) {
+      const body = await readJson(req);
+      const qty = body?.qty;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 1000) return sendJson(res, 400, { error: 'qty harus 1-1000.' });
+      const { changes } = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(qty, Number(restock[1]));
+      if (!changes) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      return sendJson(res, 200, toProduct(db.prepare(`${PRODUCT} WHERE id = ?`).get(Number(restock[1]))));
+    }
+    if (req.method === 'POST' && pathname === '/api/sales') {
+      const body = await readJson(req);
+      if (!body) return sendJson(res, 400, { error: 'Body harus JSON.' });
+      const { product_id: productId, qty } = body;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 99) return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+      const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId ?? 0);
+      if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      db.exec('BEGIN');
+      try {
+        const { changes } = db.prepare('UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?').run(qty, product.id, qty);
+        if (!changes) {
+          db.exec('ROLLBACK');
+          return sendJson(res, 409, { error: `Stok gak cukup, sisa ${product.stock}.` });
+        }
+        const total = product.price * qty;
+        const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(product.id, qty, total);
+        db.exec('COMMIT');
+        return sendJson(res, 201, { id: Number(lastInsertRowid), product_id: product.id, qty, total });
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+    }
+    const cancel = pathname.match(/^\/api\/sales\/(\d+)$/);
+    if (req.method === 'DELETE' && cancel) {
+      const sale = db.prepare(`SELECT id, product_id, qty, date(created_at, '+7 hours') = date('now', '+7 hours') AS today
+        FROM sales WHERE id = ?`).get(Number(cancel[1]));
+      if (!sale) return sendJson(res, 404, { error: 'Penjualan gak ketemu.' });
+      if (!sale.today) return sendJson(res, 409, { error: 'Cuma penjualan hari ini yang bisa dibatalin.' });
+      db.exec('BEGIN');
+      db.prepare('DELETE FROM sales WHERE id = ?').run(sale.id);
+      db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(sale.qty, sale.product_id);
+      db.exec('COMMIT');
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'GET' && pathname === '/api/sales/today') {
+      const sales = db.prepare(`SELECT s.id, s.product_id, p.name, s.qty, s.total, s.created_at
+        FROM sales s JOIN products p ON p.id = s.product_id
+        WHERE date(s.created_at, '+7 hours') = date('now', '+7 hours') ORDER BY s.id DESC`).all();
+      return sendJson(res, 200, { sales, total: sales.reduce((sum, s) => sum + s.total, 0) });
+    }
+    // Laporan per menu. from/to: YYYY-MM-DD (WIB), dua-duanya ikut dihitung.
+    if (req.method === 'GET' && pathname === '/api/report') {
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const from = params.get('from') ?? '';
+      const to = params.get('to') ?? '';
+      const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && new Date(`${d}T00:00:00Z`).toISOString().startsWith(d);
+      let valid = false;
+      try { valid = isDate(from) && isDate(to) && from <= to; } catch { valid = false; }
+      if (!valid) return sendJson(res, 400, { error: 'from dan to harus tanggal YYYY-MM-DD, from <= to.' });
+      const items = db.prepare(`SELECT p.id AS product_id, p.name, SUM(s.qty) AS qty, SUM(s.total) AS total
+        FROM sales s JOIN products p ON p.id = s.product_id
+        WHERE date(s.created_at, '+7 hours') BETWEEN ? AND ?
+        GROUP BY p.id ORDER BY total DESC`).all(from, to);
+      return sendJson(res, 200, { from, to, items, grand_total: items.reduce((sum, i) => sum + i.total, 0) });
+    }
+    if (req.method === 'GET' && !pathname.startsWith('/api/')) return await serveStatic(pathname, res);
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+server.listen(PORT, () => console.log(`Server jalan di port ${PORT}`));
+
+=== END FILE ===
+
+=== FILE: db/migrations/005-pisah-perubahan-kategori.js ===
+import { readFileSync } from 'node:fs';
+import { join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const db = new DatabaseSync(process.env.DB_PATH || join(ROOT, 'data.db'));
+
+if (db.prepare('PRAGMA user_version').get().user_version < 5) {
+  db.exec('BEGIN');
+  try {
+    const hasCategory = db.prepare("SELECT name FROM pragma_table_info('products') WHERE name = 'category'").get();
+    if (!hasCategory) {
+      db.exec(`ALTER TABLE products ADD COLUMN category TEXT CHECK (category IN ('minuman', 'makanan'))`);
+      db.prepare('UPDATE products SET category = "makanan" WHERE name = "Roti Bakar Cokelat"').run();
+      db.prepare('UPDATE products SET category = "minuman" WHERE name != "Roti Bakar Cokelat"').run();
+    }
+  } finally {
+    db.exec('COMMIT');
+  }
+  db.prepare('PRAGMA user_version = 5').run();
+}
+
+db.close();
+
+=== END FILE ===
+
+=== FILE: server.js ===
+import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+const MIGRATIONS = join(ROOT, 'db', 'migrations');
+
+const db = new DatabaseSync(process.env.DB_PATH || join(ROOT, 'data.db'));
+const fresh = !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'products'").get();
+if (fresh) {
+  db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+} else {
+  const version = db.prepare('PRAGMA user_version').get().user_version;
+  if (version < 5) db.exec(readFileSync(join(MIGRATIONS, '005-pisah-perubahan-kategori.js'), 'utf8'));
+}
+db.exec('PRAGMA foreign_keys = ON');
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+const PRODUCT = 'SELECT id, name, category, price, stock, min_stock, stock <= min_stock AS low FROM products';
+const toProduct = (p) => p && { ...p, low: Boolean(p.low) };
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  try { return raw ? JSON.parse(raw) : {}; } catch { return null; }
+}
+
+async function serveStatic(pathname, res) {
+  const file = normalize(join(PUBLIC, pathname === '/' ? 'index.html' : pathname));
+  if (!file.startsWith(PUBLIC + sep)) return sendJson(res, 404, { error: 'Gak ketemu.' });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  }
+}
+
+const server = createServer(async (req, res) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  try {
+    if (req.method === 'GET' && pathname === '/api/products') {
+      return sendJson(res, 200, db.prepare(`${PRODUCT} ORDER BY category, name`).all().map(toProduct));
+    }
+    const restock = pathname.match(/^\/api\/products\/(\d+)\/restock$/);
+    if (req.method === 'POST' && restock) {
+      const body = await readJson(req);
+      const qty = body?.qty;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 1000) return sendJson(res, 400, { error: 'qty harus 1-1000.' });
+      const { changes } = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(qty, Number(restock[1]));
+      if (!changes) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      return sendJson(res, 200, toProduct(db.prepare(`${PRODUCT} WHERE id = ?`).get(Number(restock[1]))));
+    }
+    if (req.method === 'POST' && pathname === '/api/sales') {
+      const body = await readJson(req);
+      if (!body) return sendJson(res, 400, { error: 'Body harus JSON.' });
+      const { product_id: productId, qty } = body;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 99) return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+      const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId ?? 0);
+      if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      db.exec('BEGIN');
+      try {
+        const { changes } = db.prepare('UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?').run(qty, product.id, qty);
+        if (!changes) {
+          db.exec('ROLLBACK');
+          return sendJson(res, 409, { error: `Stok gak cukup, sisa ${product.stock}.` });
+        }
+        const total = product.price * qty;
+        const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(product.id, qty, total);
+        db.exec('COMMIT');
+        return sendJson(res, 201, { id: Number(lastInsertRowid), product_id: product.id, qty, total });
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+    }
+    const cancel = pathname.match(/^\/api\/sales\/(\d+)$/);
+    if (req.method === 'DELETE' && cancel) {
+      const sale = db.prepare(`SELECT id, product_id, qty, date(created_at, '+7 hours') = date('now', '+7 hours') AS today
+        FROM sales WHERE id = ?`).get(Number(cancel[1]));
+      if (!sale) return sendJson(res, 404, { error: 'Penjualan gak ketemu.' });
+      if (!sale.today) return sendJson(res, 409, { error: 'Cuma penjualan hari ini yang bisa dibatalin.' });
+      db.exec('BEGIN');
+      db.prepare('DELETE FROM sales WHERE id = ?').run(sale.id);
+      db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(sale.qty, sale.product_id);
+      db.exec('COMMIT');
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'GET' && pathname === '/api/sales/today') {
+      const sales = db.prepare(`SELECT s.id, s.product_id, p.name, s.qty, s.total, s.created_at
+        FROM sales s JOIN products p ON p.id = s.product_id
+        WHERE date(s.created_at, '+7 hours') = date('now', '+7 hours') ORDER BY s.id DESC`).all();
+      return sendJson(res, 200, { sales, total: sales.reduce((sum, s) => sum + s.total, 0) });
+    }
+    // Laporan per menu. from/to: YYYY-MM-DD (WIB), dua-duanya ikut dihitung.
+    if (req.method === 'GET' && pathname === '/api/report') {
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const from = params.get('from') ?? '';
+      const to = params.get('to') ?? '';
+      const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && new Date(`${d}T00:00:00Z`).toISOString().startsWith(d);
+      let valid = false;
+      try { valid = isDate(from) && isDate(to) && from <= to; } catch { valid = false; }
+      if (!valid) return sendJson(res, 400, { error: 'from dan to harus tanggal YYYY-MM-DD, from <= to.' });
+      const items = db.prepare(`SELECT p.id AS product_id, p.name, SUM(s.qty) AS qty, SUM(s.total) AS total
+        FROM sales s JOIN products p ON p.id = s.product_id
+        WHERE date(s.created_at, '+7 hours') BETWEEN ? AND ?
+        GROUP BY p.id ORDER BY total DESC`).all(from, to);
+      return sendJson(res, 200, { from, to, items, grand_total: items.reduce((sum, i) => sum + i.total, 0) });
+    }
+    if (req.method === 'GET' && !pathname.startsWith('/api/')) return await serveStatic(pathname, res);
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+server.listen(PORT, () => console.log(`Server jalan di port ${PORT}`));
+
+=== END FILE ===
+
+=== FILE: public/app.js ===
+const menu = document.querySelector('#menu');
+const message = document.querySelector('#message');
+const todayTotal = document.querySelector('#today-total');
+const history = document.querySelector('#history');
+
+const rupiah = (n) => `Rp${n.toLocaleString('id-ID')}`;
+
+function say(text, isError = false) {
+  message.textContent = text;
+  message.classList.toggle('message--error', isError);
+}
+
+async function loadToday() {
+  const res = await fetch('/api/sales/today');
+  const { sales, total } = await res.json();
+  todayTotal.textContent = rupiah(total);
+  history.replaceChildren(...sales.map((s) => {
+    const item = document.createElement('li');
+    item.textContent = `${s.qty}x ${s.name} · ${rupiah(s.total)} `;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.sale = s.id;
+    button.textContent = 'Batal';
+    item.append(button);
+    return item;
+  }));
+}
+
+async function cancel(saleId) {
+  const res = await fetch(`/api/sales/${saleId}`, { method: 'DELETE' });
+  if (!res.ok) return say((await res.json()).error, true);
+  say('Penjualan dibatalin.');
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+history.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-sale]');
+  if (button) cancel(button.dataset.sale);
+});
+
+async function sell(product) {
+  const res = await fetch('/api/sales', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: product.id, qty: 1 }),
+  });
+  if (!res.ok) return say((await res.json()).error, true);
+  say(`${product.name} terjual.`);
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+async function loadMenu() {
+  const res = await fetch('/api/products');
+  const products = await res.json();
+  menu.replaceChildren(...products.map((product) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    const name = document.createElement('span');
+    name.textContent = product.name;
+    const price = document.createElement('span');
+    price.textContent = rupiah(product.price);
+    const stock = document.createElement('span');
+    stock.textContent = product.low ? `Stok tipis: ${product.stock}` : `Stok ${product.stock}`;
+    button.disabled = product.stock === 0;
+    button.append(name, stock, price);
+    button.addEventListener('click', () => sell(product));
+    const item = document.createElement('li');
+    item.append(button);
+    return item;
+  }));
+}
+
+try {
+  await Promise.all([loadMenu(), loadToday()]);
+} catch {
+  say('Gak bisa nyambung ke server.', true);
+}
+
+=== END FILE ===
+
+=== FILE: review/pr-3.md ===
+## Review #3 — Migrasi kategori (Joko)
+
+1. **db/migrations/003-kategori.sql — Kolom NOT NULL bikin update lama gagal.** Klaim Joko: `ADD COLUMN category TEXT NOT NULL`. Di laptop kasir yang sudah ada 4 menu (Kopi Susu Gula Aren, Americano, Roti Bakar Cokelat, Teh Tarik), SQLite menolak tambah kolom NOT NULL tanpa DEFAULT, atau set semua baris jadi 'makanan' padahal aslinya minuman. Dampak: migrasi macet, server tidak bisa start, kasir tidak bisa jualan. Perbaikan: hilangkan `NOT NULL` (kategori opsional dulu), dan buat migration pemisah (`005-pisah-perubahan-kategori.js`) yang cuma nambah kolom + set nilai tanpa memaksa baris lama — aman untuk DB versi 2 yang ada data maupun DB baru.
+
+2. **db/schema.sql tidak sinkron.** Schema bawaan masih `user_version = 2` tanpa kolom `category` dan tanpa tabel migrasi 005. Dampak: instalasi baru akan langsung jadi versi 2, migrasi ke kategori tidak jalan, menu baru muncul tanpa kategori, laporan kategori rusak. Perbaikan: tambah kolom `category TEXT` pada tabel products, naikkan `user_version` jadi 3.
+
+3. **server.js tidak menjalankan migrasi.** Migrasi hanya file SQL di folder `db/migrations`, tapi `server.js` tidak mengeksekusinya; `PRAGMA user_version` tetap 2 dan kolom `category` tidak muncul. Dampak: query `ORDER BY category, name` tetap jalan tapi datanya kosong per kategori, frontend malah berpotensi crash kalau ada code lain yang baca `product.category`. Perbaikan: jalankan migration `005-pisah-perubahan-kategori.js` secara eksplisit di awal startup (dicek `user_version < 5`), path pakai `join` agar aman di Windows.
+
+Yang belum dibenerin / perlu dicek:
+- [perlu dicek] Belum ada migrasi `ALTER TABLE products ALTER COLUMN category DROP NOT NULL` yang terbukti jalan (dialegasikan ke SQLite dialect); migration 005 tetap versi `NOT NULL` pada produk baru. Catat kalau ada error saat instalasi baru.
+
+=== END FILE ===
+
+Catatan ke bos:
+Migrasi kategori Joko gue benerin total karena bakal nge-crash laptop kasir yang udah berisi data — kolom `category` gue lepaskan dari `NOT NULL` dan migrasinya dipisah jadi skrip JS (`005-pisah-perubahan-kategori.js`) yang aman buat DB versi 2 maupun instalasi baru. Gue juga nyinkronin `db/schema.sql` (tambah kolom + versi 3) dan nambahin eksekusi migrasi di `server.js` pas startup. Yang masih perlu dicek: migrasi `DROP NOT NULL` buat kolom yang udah terisi, karena belum gue buktikan jalannya.

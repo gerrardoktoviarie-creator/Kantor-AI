@@ -1,0 +1,914 @@
+=== FILE: server.js ===
+// Kasir Kedai Kopi Senja.
+//   GET  /api/products                    daftar menu (+ stock, min_stock, low)
+//   POST /api/products/:id/restock        { qty: 1-1000 } -> restok stok
+//   POST /api/sales                       { product_id, qty } -> catat penjualan (otomatis kurangi stok)
+//   GET  /api/sales/today                 penjualan hari ini (WIB) + total
+import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { readFile, readdir } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+const DB_PATH = process.env.DB_PATH || join(ROOT, 'data.db');
+const MIGRATIONS_DIR = join(ROOT, 'db', 'migrations');
+
+const db = new DatabaseSync(DB_PATH);
+
+function runSql(sql) {
+  try {
+    db.exec(sql);
+  } catch (err) {
+    if (err.message.includes('SQLITE_ERROR')) throw err;
+    throw err;
+  }
+}
+
+function getCurrentVersion() {
+  const row = db.prepare("PRAGMA user_version").get();
+  return Number(row?.user_version ?? 0);
+}
+
+function loadAndRunMigrations() {
+  const current = getCurrentVersion();
+  readdir(MIGRATIONS_DIR).catch(() => []);
+  const files = readdirSyncSafe(MIGRATIONS_DIR);
+  const wanted = ['002-stok.sql'];
+  for (const name of wanted) {
+    const path = join(MIGRATIONS_DIR, name);
+    try {
+      const sql = readFileSync(path, 'utf8');
+      const version = name.match(/^\d+/)?.[0];
+      if (!version) continue;
+      if (Number(version) <= current) continue;
+      db.exec(sql);
+      console.log(`Migrasi dijalankan: ${name}`);
+    } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ERR_DIR_CLOSED') continue;
+      throw err;
+    }
+  }
+}
+
+function readdirSyncSafe(dir) {
+  try {
+    return readdirSyncSafeInternal(dir);
+  } catch {
+    return [];
+  }
+}
+
+function readdirSyncSafeInternal(dir) {
+  const fs = require('node:fs');
+  return fs.readdirSync(dir).filter(f => /^\d+-.*\.sql$/.test(f)).sort();
+}
+
+runSql(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+loadAndRunMigrations();
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return null;
+  }
+}
+
+async function serveStatic(pathname, res) {
+  const file = normalize(join(PUBLIC, pathname === '/' ? 'index.html' : pathname));
+  if (!file.startsWith(PUBLIC + sep)) return sendJson(res, 404, { error: 'Gak ketemu.' });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  }
+}
+
+const routes = {
+  'GET /api/products': (req, res) => {
+    const products = db.prepare('SELECT id, name, price, stock, min_stock, ' +
+      '(stock <= min_stock) AS low FROM products ORDER BY name').all();
+    const out = products.map((p) => ({
+      id: p.id, name: p.name, price: p.price, stock: p.stock, min_stock: p.min_stock, low: !!p.low,
+    }));
+    sendJson(res, 200, out);
+  },
+
+  'POST /api/products/:id/restock': (req, res) => {
+    const productId = req.headers['x-product-id'] ?? req.params?.id;
+    const qty = parseInt(req.headers['x-qty'], 10);
+    if (!Number.isInteger(qty) || qty < 1 || qty > 1000) return sendJson(res, 400, { error: 'Jumlah restok harus 1-1000.' });
+
+    const product = db.prepare('SELECT id, stock, min_stock FROM products WHERE id = ?').get(productId ?? 0);
+    if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+
+    const newStock = product.stock + qty;
+    db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, product.id);
+    const updated = db.prepare('SELECT id, name, price, stock, min_stock, (stock <= min_stock) AS low FROM products WHERE id = ?').get(productId);
+
+    sendJson(res, 200, {
+      id: updated.id, name: updated.name, price: updated.price, stock: updated.stock, min_stock: updated.min_stock, low: !!updated.low,
+    });
+  },
+
+  'POST /api/sales': async (req, res) => {
+    const body = await readJson(req);
+    if (!body) return sendJson(res, 400, { error: 'Body harus JSON.' });
+    const { product_id: productId, qty } = body;
+    if (!Number.isInteger(qty) || qty < 1 || qty > 99) return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+    if (productId === undefined || productId === null) return sendJson(res, 400, { error: 'Menu harus dipilih.' });
+
+    db.exec('BEGIN');
+    try {
+      const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId);
+      if (!product) {
+        db.exec('ROLLBACK');
+        return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      }
+      if (product.stock < qty) {
+        db.exec('ROLLBACK');
+        return sendJson(res, 409, { error: `Stok gak cukup. Tersisa ${product.stock} untuk ${product.name}.` });
+      }
+      const newStock = product.stock - qty;
+      db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, product.id);
+      const total = product.price * qty;
+      const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(product.id, qty, total);
+      db.exec('COMMIT');
+      sendJson(res, 201, { id: Number(lastInsertRowid), product_id: product.id, qty, total });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error(err);
+      sendJson(res, 500, { error: 'Server error.' });
+    }
+  },
+
+  'GET /api/sales/today': (req, res) => {
+    const sales = db.prepare(`SELECT s.id, s.product_id, p.name, s.qty, s.total, s.created_at
+      FROM sales s JOIN products p ON p.id = s.product_id
+      WHERE date(s.created_at, '+7 hours') = date('now', '+7 hours')
+      ORDER BY s.id DESC`).all();
+    sendJson(res, 200, { sales, total: sales.reduce((sum, s) => sum + s.total, 0) });
+  },
+};
+
+const server = createServer(async (req, res) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  const routeKey = req.method === 'POST' && pathname.match(/^\/api\/products\/(\d+)\/restock$/) ? `POST /api/products/` : `${req.method} ${pathname}`;
+  try {
+    if (routeKey === 'POST /api/products/') {
+      const match = pathname.match(/^\/api\/products\/(\d+)\/restock$/);
+      const productId = match?.[1];
+      const body = await readJson(req);
+      const qty = parseInt(body.qty, 10);
+      if (!Number.isInteger(qty) || qty < 1 || qty > 1000) return sendJson(res, 400, { error: 'Jumlah restok harus 1-1000.' });
+      const product = db.prepare('SELECT id, stock, min_stock FROM products WHERE id = ?').get(productId);
+      if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      const newStock = product.stock + qty;
+      db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+      const updated = db.prepare('SELECT id, name, price, stock, min_stock, (stock <= min_stock) AS low FROM products WHERE id = ?').get(productId);
+      return sendJson(res, 200, {
+        id: updated.id, name: updated.name, price: updated.price, stock: updated.stock, min_stock: updated.min_stock, low: !!updated.low,
+      });
+    }
+    const route = routes[routeKey];
+    if (route) return await route(req, res);
+    if (req.method === 'GET' && !pathname.startsWith('/api/')) return await serveStatic(pathname, res);
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+server.listen(PORT, () => console.log(`Server jalan di port ${PORT}`));
+
+=== END FILE ===
+
+Koreksi file: route restock di atas pake `req.params` yang gak ada di router custom-ku. Biar konsisten dan bener, ini versi yang direvisi tanpa `req.params`.
+
+=== FILE: server.js ===
+// Kasir Kedai Kopi Senja.
+//   GET  /api/products                    daftar menu (+ stock, min_stock, low)
+//   POST /api/products/:id/restock        { qty: 1-1000 } -> restok stok
+//   POST /api/sales                       { product_id, qty } -> catat penjualan (otomatis kurangi stok)
+//   GET  /api/sales/today                 penjualan hari ini (WIB) + total
+import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+const DB_PATH = process.env.DB_PATH || join(ROOT, 'data.db');
+const MIGRATIONS_DIR = join(ROOT, 'db', 'migrations');
+
+const db = new DatabaseSync(DB_PATH);
+db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return null;
+  }
+}
+
+async function serveStatic(pathname, res) {
+  const file = normalize(join(PUBLIC, pathname === '/' ? 'index.html' : pathname));
+  if (!file.startsWith(PUBLIC + sep)) return sendJson(res, 404, { error: 'Gak ketemu.' });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  }
+}
+
+const routes = {
+  'GET /api/products': (req, res) => {
+    const products = db.prepare('SELECT id, name, price, stock, min_stock, ' +
+      '(stock <= min_stock) AS low FROM products ORDER BY name').all();
+    const out = products.map((p) => ({
+      id: p.id, name: p.name, price: p.price, stock: p.stock, min_stock: p.min_stock, low: !!p.low,
+    }));
+    sendJson(res, 200, out);
+  },
+
+  'POST /api/products/:id/restock': (req, res) => {
+    const match = req.url.match(/^\/api\/products\/(\d+)\/restock$/);
+    if (!match) return sendJson(res, 404, { error: 'Endpoint restok salah format.' });
+    const productId = parseInt(match[1], 10);
+    const body = readJson(req);
+    const { qty } = body ?? {};
+    if (!Number.isInteger(qty) || qty < 1 || qty > 1000) return sendJson(res, 400, { error: 'Jumlah restok harus 1-1000.' });
+
+    const product = db.prepare('SELECT id, stock, min_stock FROM products WHERE id = ?').get(productId);
+    if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+
+    const newStock = product.stock + qty;
+    db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+    const updated = db.prepare('SELECT id, name, price, stock, min_stock, (stock <= min_stock) AS low FROM products WHERE id = ?').get(productId);
+
+    sendJson(res, 200, {
+      id: updated.id, name: updated.name, price: updated.price, stock: updated.stock, min_stock: updated.min_stock, low: !!updated.low,
+    });
+  },
+
+  'POST /api/sales': async (req, res) => {
+    const body = await readJson(req);
+    if (!body) return sendJson(res, 400, { error: 'Body harus JSON.' });
+    const { product_id: productId, qty } = body;
+    if (!Number.isInteger(qty) || qty < 1 || qty > 99) return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+    if (productId === undefined || productId === null) return sendJson(res, 400, { error: 'Menu harus dipilih.' });
+
+    db.exec('BEGIN');
+    try {
+      const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId);
+      if (!product) {
+        db.exec('ROLLBACK');
+        return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      }
+      if (product.stock < qty) {
+        db.exec('ROLLBACK');
+        return sendJson(res, 409, { error: `Stok gak cukup. Tersisa ${product.stock} untuk ${product.name}.` });
+      }
+      const newStock = product.stock - qty;
+      db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+      const total = product.price * qty;
+      const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(productId, qty, total);
+      db.exec('COMMIT');
+      sendJson(res, 201, { id: Number(lastInsertRowid), product_id: productId, qty, total });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error(err);
+      sendJson(res, 500, { error: 'Server error.' });
+    }
+  },
+
+  'GET /api/sales/today': (req, res) => {
+    const sales = db.prepare(`SELECT s.id, s.product_id, p.name, s.qty, s.total, s.created_at
+      FROM sales s JOIN products p ON p.id = s.product_id
+      WHERE date(s.created_at, '+7 hours') = date('now', '+7 hours')
+      ORDER BY s.id DESC`).all();
+    sendJson(res, 200, { sales, total: sales.reduce((sum, s) => sum + s.total, 0) });
+  },
+};
+
+const server = createServer(async (req, res) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  try {
+    if (req.method === 'POST' && pathname.match(/^\/api\/products\/\d+\/restock$/)) {
+      return routes['POST /api/products/:id/restock'](req, res);
+    }
+    const route = routes[`${req.method} ${pathname}`];
+    if (route) return await route(req, res);
+    if (req.method === 'GET' && !pathname.startsWith('/api/')) return await serveStatic(pathname, res);
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+server.listen(PORT, () => console.log(`Server jalan di port ${PORT}`));
+
+=== END FILE ===
+
+Masalah: DB_PATH dibuka dulu sebelum migrasi, tapi kalau schema.sql belum jalanin migrasi otomatis. Bos bilang kalau user_version < 2 jalanin migrasi otomatis. Tapi di sini DB dibuka dengan schema.sql langsung. Karena schema.sql sekarang versi 2, database baru udah versi 2. Untuk database lama (user_version 1 atau kurang), perlu cek dan jalankan migrasi. Jadi perlu logika migrasi.
+
+Tapi bos minta: "Pas server nyala, kalau database-nya masih versi lama (user_version < 2), jalanin migrasi Joko otomatis." Schema.sql udah versi 2, jadi untuk DB baru aman. Untuk DB lama, perlu jalankan migrasi 002-stok.sql.
+
+Saya harus tambahkan logic: cek user_version, kalau < 2 jalankan migrasi. Tapi DB dibuka pake DB_PATH yang mungkin data.db lama. Jadi:
+
+1. Buka DB
+2. Cek user_version
+3. Kalau < 2, jalankan migrasi
+4. Lalu exec schema? Tunggu, kalau DB lama udah ada tabel products (versi 1), exec schema.sql akan error karena column stock udah ada (tapi schema pake IF NOT EXISTS, jadi aman).
+
+Hmm, tapi migrasi 002-stok.sql pake `ALTER TABLE products ADD COLUMN` — kalau schema.sql dijalankan dulu dan IF NOT EXISTS, tabel products udah ada dari schema, trus ALTER lagi bakal error karena column udah ada. Jadi urutannya: cek user_version dulu, jalankan migrasi yang perlu, baru schema? Tapi schema.sql ada INSERT OR IGNORE products — buat DB lama insertnya bakal skip (IF NOT EXISTS dan INSERT OR IGNORE), aman.
+
+Tapi ada masalah: buat DB baru, user_version = 0, migrasi jalanin 002-stok.sql (ALTER products... tapi products belum ada! ERROR). Jadi urutannya harus: jalanin schema.sql dulu, baru cek user_version dan migrasi.
+
+Jadi flow yang bener:
+1. db = new DatabaseSync(DB_PATH)
+2. db.exec(schema.sql)  // untuk DB baru bikin tabel + user_version 2; untuk DB lama schema aman (IF NOT EXISTS, INSERT OR IGNORE)
+3. cek user_version; kalau < 2, jalankan file migrasi yang belum terpasang (cari file db/migrations/00x-*.sql yang belum)
+
+Untuk migrasi otomatis, perlu scan folder migrations, urutkan, jalankan yang versi > current. Ini fleksibel buat migrasi masa depan.
+
+Perlu handle readFileSync migrations. Bisa pake fs.promises.readdir + readFileSync.
+
+Berikut implementasinya:
+
+```js
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+const DB_PATH = process.env.DB_PATH || join(ROOT, 'data.db');
+const MIGRATIONS_DIR = join(ROOT, 'db', 'migrations');
+
+const db = new DatabaseSync(DB_PATH);
+db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+
+// Cek & jalankan migrasi yang belum terpasang
+function runPendingMigrations() {
+  try {
+    const files = readdirSync(MIGRATIONS_DIR);
+    const current = db.prepare('PRAGMA user_version').get().user_version;
+    for (const file of files.sort()) {
+      const m = file.match(/^(\d+)-(.*\.sql)$/);
+      if (!m) continue;
+      const version = Number(m[1]);
+      if (version > current) {
+        const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+        db.exec(sql);
+        console.log(`Migrasi dijalankan: ${file} (${current} -> ${version})`);
+      }
+    }
+  } catch (err) {
+    console.warn('Migrasi belum tersedia:', err.message);
+  }
+}
+```
+
+Wait, user_version setelah exec schema adalah 2. Untuk DB lama user_version 1, migrasi 002 (version 2) > 1, jadi jalan. Untuk DB baru user_version 2, tidak ada migrasi > 2, aman. Re-run berkali-kali aman karena user_version cuma naik.
+
+Migrasi 002-stok.sql jalankan berkali-kali? Kalau re-run server setelah migrasi pertama, user_version sekarang 2, jadi migrasi gak jalan lagi. Good.
+
+Tapi ada satu concern: migrasi 002 jalankan `PRAGMA user_version = 2;` di dalamnya. Setelah itu user_version = 2. Cek berikutnya gak jalan lagi. Good.
+
+Sekarang endpoint GET /api/products: tambah stock, min_stock, low (stock <= min_stock).低: true kalau stock <= min_stock. Use `(stock <= min_stock) AS low`.
+
+Endpoint POST /api/products/:id/restock: body { qty: n } integer 1-1000. Return updated product data. 404 kalau menu gak ada, 400 qty ngaco.
+
+Penjualan ngurangin stok atomik: BEGIN, cek stok >= qty, UPDATE stock, INSERT sales, COMMIT. Kalau gak cukup, ROLLBACK + 409 dengan pesan jelas.
+
+Perlu perhatikan: router custom ku pakai string key, jadi route 'POST /api/products/:id/restock' gak match exact path. Saya perlu handle dynamic path. Bisa check pathname match regex untuk restock, lalu panggil handler.
+
+Juga, di sales handler, `db.prepare(...).run(product.id, qty, total)` — productId sudah valid integer.
+
+Error handling: try/catch di request handler utama, return 500 generic.
+
+Validasi input:
+- restock qty: integer 1-1000
+- sales qty: integer 1-99 (sudah ada), productId wajib
+- Body harus JSON
+
+Untuk path traversal pada serveStatic sudah ada check `!file.startsWith(PUBLIC + sep)`. Good.
+
+Content-Type sudah diset. Password/rahasia gak ada.
+
+Migrasi: perlu tambahkan. Saya akan revisi server.js lengkap:
+
+1. Tambahkan fungsi runPendingMigrations setelah schema.
+2. Update routes:
+   - GET /api/products: include stock, min_stock, low
+   - Tambah POST /api/products/:id/restock
+   - POST /api/sales: atomik kurangi stok
+
+Routing: di main handler, cek dulu apakah pathname match /api/products/\d+/restock, jalankan handler restock. Atau tambahkan logika parse di handler.
+
+Karena routes object keyed by exact string, untuk dynamic route saya bisa:
+
+```js
+if (req.method === 'POST' && /^\/api\/products\/\d+\/restock$/.test(pathname)) {
+  const id = parseInt(pathname.match(/^\/api\/products\/(\d+)\/restock$/)[1], 10);
+  // handle
+}
+```
+
+Atau lebih rapi: buat handler restock yang menerima req, res, id. Tapi tetap sederhana saja: handle langsung di main loop.
+
+Mari tulis ulang server.js lengkap:
+
+```js
+import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { readFile, readdirSync } from 'node:fs';
+import { readFile as readFilePromises } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+const DB_PATH = process.env.DB_PATH || join(ROOT, 'data.db');
+const MIGRATIONS_DIR = join(ROOT, 'db', 'migrations');
+
+const db = new DatabaseSync(DB_PATH);
+
+// Schema untuk instalasi baru (idempoten)
+db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+
+// Jalankan migrasi yang belum terpasang (untuk DB lama)
+function applyPendingMigrations() {
+  try {
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => /^(\d+)-.*\.sql$/.test(f)).sort();
+    const current = db.prepare('PRAGMA user_version').get().user_version;
+    for (const file of files) {
+      const m = file.match(/^(\d+)-(.*\.sql)$/);
+      if (!m) continue;
+      const version = parseInt(m[1], 10);
+      if (version > current) {
+        const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+        db.exec(sql);
+        console.log(`Migrasi dijalankan: ${file} (versi ${current} -> ${version})`);
+      }
+    }
+  } catch (err) {
+    // Folder migrations belum ada -> bukan error fatal (misal baru install)
+    console.warn('Catatan:', err.message);
+  }
+}
+applyPendingMigrations();
+```
+
+Wait — `readdirSync` from node:fs needed. Import it.
+
+Then routes:
+
+```js
+const routes = {
+  'GET /api/products': (req, res) => {
+    const products = db.prepare(`
+      SELECT id, name, price, stock, min_stock,
+             CASE WHEN stock <= min_stock THEN 1 ELSE 0 END AS low
+      FROM products ORDER BY name
+    `).all();
+    sendJson(res, 200, products);
+  },
+
+  'POST /api/products/:id/restock': (req, res) => {
+    const match = req.url.match(/^\/api\/products\/(\d+)\/restock$/);
+    if (!match) return sendJson(res, 404, { error: 'Format URL restok salah.' });
+    const productId = parseInt(match[1], 10);
+    const body = readJson(req);
+    if (!body || typeof body.qty !== 'number' || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 1000) {
+      return sendJson(res, 400, { error: 'Jumlah restok harus bilangan bulat 1-1000.' });
+    }
+
+    const product = db.prepare('SELECT id, stock, min_stock FROM products WHERE id = ?').get(productId);
+    if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+
+    const newStock = product.stock + body.qty;
+    db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+    const updated = db.prepare('SELECT id, name, price, stock, min_stock, CASE WHEN stock <= min_stock THEN 1 ELSE 0 END AS low FROM products WHERE id = ?').get(productId);
+    sendJson(res, 200, updated);
+  },
+
+  'POST /api/sales': async (req, res) => {
+    const body = await readJson(req);
+    if (!body) return sendJson(res, 400, { error: 'Body harus JSON.' });
+    const { product_id: productId, qty } = body;
+    if (!Number.isInteger(qty) || qty < 1 || qty > 99) return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+    if (productId === undefined || productId === null) return sendJson(res, 400, { error: 'Menu harus dipilih.' });
+
+    db.exec('BEGIN');
+    try {
+      const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId);
+      if (!product) {
+        db.exec('ROLLBACK');
+        return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      }
+      if (product.stock < qty) {
+        db.exec('ROLLBACK');
+        return sendJson(res, 409, { error: `Stok gak cukup. Tersisa ${product.stock} pcs untuk ${product.name}.` });
+      }
+      const newStock = product.stock - qty;
+      db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+      const total = product.price * qty;
+      const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(productId, qty, total);
+      db.exec('COMMIT');
+      sendJson(res, 201, { id: Number(lastInsertRowid), product_id: productId, qty, total });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error(err);
+      sendJson(res, 500, { error: 'Server error.' });
+    }
+  },
+
+  'GET /api/sales/today': (req, res) => {
+    const sales = db.prepare(`SELECT s.id, s.product_id, p.name, s.qty, s.total, s.created_at
+      FROM sales s JOIN products p ON p.id = s.product_id
+      WHERE date(s.created_at, '+7 hours') = date('now', '+7 hours')
+      ORDER BY s.id DESC`).all();
+    sendJson(res, 200, { sales, total: sales.reduce((sum, s) => sum + s.total, 0) });
+  },
+};
+```
+
+Main handler:
+
+```js
+const server = createServer(async (req, res) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  try {
+    if (req.method === 'POST' && /^\/api\/products\/\d+\/restock$/.test(pathname)) {
+      return routes['POST /api/products/:id/restock'](req, res);
+    }
+    const route = routes[`${req.method} ${pathname}`];
+    if (route) return await route(req, res);
+    if (req.method === 'GET' && !pathname.startsWith('/api/')) return await serveStatic(pathname, res);
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+});
+```
+
+Hmm, di handler restock saya panggil `readJson(req)` yang async, tapi route handler untuk GET synchronous. readJson returns Promise. Di sales handler await sudah dipakai. Untuk restock handler di routes, call readJson(req) — perlu await. Tapi routes synchronous. Oke, bikin restock handler async:
+
+```js
+'POST /api/products/:id/restock': async (req, res) => {
+  ...
+  const body = await readJson(req);
+  ...
+}
+```
+
+Dan main loop `return await routes[...]`.
+
+Untuk `low`, response JSON akan jadi number 0/1. Better convert to boolean. Add `.map` atau handle di SQL dengan CASE, tapi boolean lebih baik. Bisa map hasil:
+
+```js
+const products = db.prepare(...).all().map(p => ({ ...p, low: !!p.low }));
+```
+
+Di SQL, `CASE WHEN stock <= min_stock THEN 1 ELSE 0 END AS low` → 1/0, lalu map convert ke boolean.
+
+Atau langsung return object dengan low boolean.
+
+Sekarang, perhatikan constraint bos: "Endpoint restok: POST /api/products/:id/restock body { "qty": n } (bilangan bulat 1-1000), balikin data menu yang udah ke-update. Menu gak ada 404, qty ngaco 400."
+
+Good.
+
+Juga, server restart berkali-kali gak boleh error: schema.sql idempoten, migrasi hanya jalan jika version < 2, dan hanya sekali. Re-run aman.
+
+One more thing: DB_PATH dibuka dulu, lalu schema. Untuk database baru, schema set user_version=2. Migrasi check: current=2, semua file migration version <=2? 002 -> version 2, not > 2, so skip. Good.
+
+Untuk database lama (user_version 1): current=1, 002 version 2 > 1 → jalankan. After migration user_version=2. Good.
+
+Edge case: jika DB_PATH tidak ada file sama sekali, new DatabaseSync creates empty DB. Schema created, user_version=0? Wait, schema.sql sets PRAGMA user_version = 2 at line 2. So after exec schema, user_version = 2. Migration check: current=2, skip. Good.
+
+Wait, there's a subtle issue: when you do `new DatabaseSync(path)` it creates the file. Then exec schema. user_version set to 2. Good.
+
+But what if the file already exists with user_version 1 (old DB)? Schema exec runs IF NOT EXISTS — tables exist, so nothing added; INSERT OR IGNORE skips existing products. Then migration runs 002 (2 > 1) → ALTER products ADD COLUMN stock, min_stock; UPDATE stock = 0; PRAGMA user_version = 2. 
+
+Note: migrasi 002-stok.sql has `UPDATE products SET stock = 0 WHERE stock IS NULL;` — after ALTER with DEFAULT 0, existing rows get stock=0 automatically, so the UPDATE is harmless. But wait — the ALTER ADD COLUMN stock INTEGER NOT NULL DEFAULT 0. For existing rows, stock = 0. Then UPDATE WHERE stock IS NULL does nothing. Fine.
+
+Also `ALTER TABLE products ADD COLUMN min_stock INTEGER NOT NULL DEFAULT 5` — existing rows get min_stock=5. Good.
+
+Now, potential issue: the migration file uses BEGIN TRANSACTION ... COMMIT. And schema also might have... no, schema doesn't use transactions. After schema exec, we're not in a transaction. Migration file starts its own transaction. Fine.
+
+Now, the low field in GET /api/products: include it.
+
+Let me also double check the sales today query uses '+7 hours' for WIB — already there per Bos feedback, keep it.
+
+Also need to make sure readJson is awaited in restock handler and that it handles empty body: `raw ? JSON.parse(raw) : {}` → returns {} if empty, then body.qty undefined → 400. Good.
+
+Type check: `typeof body.qty !== 'number'` — if body is {} or null, body.qty undefined → 400. Also handle `body == null` → treat as bad. My condition covers: if (!body || typeof body.qty !== 'number' || !Number.isInteger(body.qty) || qty < 1 || qty > 1000). Note: `typeof body.qty !== 'number'` is true for undefined, so 400. Good. Also `typeof 5 === 'number'` and `Number.isInteger(5)` true. `typeof 5.5 === 'number'` but `!Number.isInteger(5.5)` → 400. Good, hanya integer.
+
+Restock qty 1-1000. Sales qty 1-99 (sudah dari sebelumnya, biarkan).
+
+Now write the final server.js.
+
+Juga, perlu import readdirSync from node:fs. Let me include it.
+
+Final file:
+
+=== FILE: server.js ===
+// Kasir Kedai Kopi Senja.
+//   GET  /api/products                    daftar menu (+ stock, min_stock, low)
+//   POST /api/products/:id/restock        { qty: 1-1000 } -> restok stok
+//   POST /api/sales                       { product_id, qty } -> catat penjualan, otomatis kurangi stok
+//   GET  /api/sales/today                 penjualan hari ini (WIB) + total
+import { createServer } from 'node:http';
+import { readFileSync, readdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+const DB_PATH = process.env.DB_PATH || join(ROOT, 'data.db');
+const MIGRATIONS_DIR = join(ROOT, 'db', 'migrations');
+
+const db = new DatabaseSync(DB_PATH);
+
+// Instalasi baru: schema idempoten (bisa jalan berkali-kali), langsung versi 2.
+// Database lama: tabel yang ada tidak dihapus karena pakai IF NOT EXISTS / INSERT OR IGNORE.
+db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+
+// Jalankan migrasi yang belum terpasang (untuk database lama v1).
+// Aman dijalankan ulang: hanya file yang versinya > user_version saat ini yang dieksekusi.
+function applyPendingMigrations() {
+  try {
+    const files = readdirSync(MIGRATIONS_DIR)
+      .filter((f) => /^(\d+)-.*\.sql$/.test(f))
+      .sort();
+    const current = db.prepare('PRAGMA user_version').get().user_version;
+    for (const file of files) {
+      const m = file.match(/^(\d+)-(.*\.sql)$/);
+      if (!m) continue;
+      const version = parseInt(m[1], 10);
+      if (version > current) {
+        db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
+        console.log(`Migrasi dijalankan: ${file} (versi ${current} -> ${version})`);
+      }
+    }
+  } catch (err) {
+    // Folder migrasi belum ada bukan hal fatal (misalnya instalasi baru).
+    console.warn('Catatan:', err.message);
+  }
+}
+applyPendingMigrations();
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return null;
+  }
+}
+
+async function serveStatic(pathname, res) {
+  const file = normalize(join(PUBLIC, pathname === '/' ? 'index.html' : pathname));
+  if (!file.startsWith(PUBLIC + sep)) return sendJson(res, 404, { error: 'Gak ketemu.' });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  }
+}
+
+const routes = {
+  'GET /api/products': (req, res) => {
+    const products = db.prepare(`
+      SELECT id, name, price, stock, min_stock,
+             CASE WHEN stock <= min_stock THEN 1 ELSE 0 END AS low
+      FROM products
+      ORDER BY name
+    `).all().map((p) => ({ ...p, low: !!p.low }));
+    sendJson(res, 200, products);
+  },
+
+  'POST /api/products/:id/restock': async (req, res) => {
+    const match = req.url.match(/^\/api\/products\/(\d+)\/restock$/);
+    if (!match) return sendJson(res, 404, { error: 'Format URL restok salah.' });
+    const productId = parseInt(match[1], 10);
+
+    const body = await readJson(req);
+    if (!body || typeof body.qty !== 'number' || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 1000) {
+      return sendJson(res, 400, { error: 'Jumlah restok harus bilangan bulat 1-1000.' });
+    }
+
+    const product = db.prepare('SELECT id, stock, min_stock FROM products WHERE id = ?').get(productId);
+    if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+
+    const newStock = product.stock + body.qty;
+    db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+    const updated = db.prepare('SELECT id, name, price, stock, min_stock, CASE WHEN stock <= min_stock THEN 1 ELSE 0 END AS low FROM products WHERE id = ?').get(productId);
+    sendJson(res, 200, { ...updated, low: !!updated.low });
+  },
+
+  'POST /api/sales': async (req, res) => {
+    const body = await readJson(req);
+    if (!body) return sendJson(res, 400, { error: 'Body harus JSON.' });
+    const { product_id: productId, qty } = body;
+
+    if (!Number.isInteger(qty) || qty < 1 || qty > 99) return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+    if (productId === undefined || productId === null) return sendJson(res, 400, { error: 'Menu harus dipilih.' });
+
+    db.exec('BEGIN');
+    try {
+      const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId);
+      if (!product) {
+        db.exec('ROLLBACK');
+        return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      }
+      if (product.stock < qty) {
+        db.exec('ROLLBACK');
+        return sendJson(res, 409, { error: `Stok gak cukup. Tersisa ${product.stock} pcs untuk ${product.name}.` });
+      }
+      const newStock = product.stock - qty;
+      db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+      const total = product.price * qty;
+      const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(productId, qty, total);
+      db.exec('COMMIT');
+      sendJson(res, 201, { id: Number(lastInsertRowid), product_id: productId, qty, total });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error(err);
+      sendJson(res, 500, { error: 'Server error.' });
+    }
+  },
+
+  'GET /api/sales/today': (req, res) => {
+    const sales = db.prepare(`SELECT s.id, s.product_id, p.name, s.qty, s.total, s.created_at
+      FROM sales s JOIN products p ON p.id = s.product_id
+      WHERE date(s.created_at, '+7 hours') = date('now', '+7 hours')
+      ORDER BY s.id DESC`).all();
+    sendJson(res, 200, { sales, total: sales.reduce((sum, s) => sum + s.total, 0) });
+  },
+};
+
+const server = createServer(async (req, res) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  try {
+    if (req.method === 'POST' && /^\/api\/products\/\d+\/restock$/.test(pathname)) {
+      return await routes['POST /api/products/:id/restock'](req, res);
+    }
+    const route = routes[`${req.method} ${pathname}`];
+    if (route) return await route(req, res);
+    if (req.method === 'GET' && !pathname.startsWith('/api/')) return await serveStatic(pathname, res);
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+server.listen(PORT, () => console.log(`Server jalan di port ${PORT}`));
+
+=== END FILE ===
+
+Tinggal laporan ke bos. 2-4 kalimat, singkat.
+
+Laporan:
+- Migrasi otomatis: saat start cek PRAGMA user_version, kalau <2 jalankan db/migrations/002-stok.sql; DB baru tetap pake schema.sql v2, restart berkali-kali aman.
+- GET /api/products sekarang return stock, min_stock, low (true kalau stock <= min_stock).
+- POST /api/sales kurangi stok atomik (BEGIN/COMMIT): stok kurang tolak 409 dengan pesan sisa stok, gak ada perubahan.
+- Endpoint restok POST /api/products/:id/restock body { qty: 1-1000 }, return data menu update; 404 menu gak ada, 400 qty ngaco.
+
+Tulis dalam Bahasa Indonesia santai profesional.
+
+Sekarang, periksa ulang: di README bos bilang endpoint dan nama field sama persis dengan docs dan dipakai Rani. Docs: GET /api/products return stock, min_stock, low. POST /api/products/:id/restock body {qty}. OK.
+
+Satu hal: di sales handler, product.id sudah integer. run(product.id, qty, total) — product.id integer, qty integer, total integer. OK.
+
+Perhatikan: query SELECT di products untuk low — CASE WHEN ... THEN 1 ELSE 0 END AS low → map ke boolean. OK.
+
+Migrasi: readdirSync(MIGRATIONS_DIR) — jika folder tidak ada, catch, warn. OK.
+
+Tapi ada satu edge case: jika file migration punya nama gak matching pattern, skip. OK.
+
+Also, schema.sql dijalankan sebelum migrasi. Untuk DB baru user_version=2. Migration check current=2, 002 version=2 not > 2, skip. OK. Untuk DB lama user_version=1, 002 version=2 > 1 → run. After run, user_version=2. Re-run: skip. OK.
+
+Potential issue: exec() untuk BEGIN/COMMIT/ROLLBACK — SQLite Sync API supports db.exec(sql). Yes.
+
+One concern: `db.prepare(...).get(productId)` where productId from parseInt — if path is like /api/products/abc/restock, regex \d+ won't match, so 404 earlier. If /api/products/123/restock, productId=123 integer. get(123) works.
+
+Now write the report.
+
+Also should I update public files? Client app loads menu via GET /api/products — sekarang dapat stock, min_stock, low. Bisa ditampilin di UI, tapi Bos gak minta ubah frontend. Cukup backend. Nanti tim frontend mungkin tambahin alert. I won't change frontend since not requested.
+
+Wait — but the app currently doesn't show stock. Bos only asked for API changes. Keep frontend unchanged.
+
+Final check on constraints: SQL prepared statements everywhere. Yes. Transactions for multi-table. Yes (sales + update products). Path traversal check in serveStatic. Content-Type set. No secrets. Error body {error}. 400/404/409/500. Good.
+
+Length limit body — not strictly enforced but default http server body size is fine for this scale; not required for this task. Skip.
+
+Now output final file and report.
+</think>
+
+=== FILE: server.js ===
+// Kasir Kedai Kopi Senja.
+//   GET  /api/products                    daftar menu (+ stock, min_stock, low)
+//   POST /api/products/:id/restock        { qty: 1-1000 } -> restok stok
+//   POST /api/sales                       { product_id, qty } -> catat penjualan, otomatis kurangi stok
+//   GET  /api/sales/today                 penjualan hari ini (WIB) + total
+import { createServer } from 'node:http';
+import { readFileSync, readdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+const DB_PATH = process.env.DB_PATH || join(ROOT, 'data.db');
+const MIGRATIONS_DIR = join(ROOT, 'db', 'migrations');
+
+const db = new DatabaseSync(DB_PATH);
+
+// Instalasi baru: schema idempoten (bisa jalan berkali-kali), langsung versi 2.
+// Database lama: tabel yang ada tidak dihapus karena pakai IF NOT EXISTS / INSERT OR IGNORE.
+db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+
+// Jalankan migrasi yang belum terpasang (untuk database lama v1).
+// Aman dijalankan ulang: hanya file yang versinya > user_version saat ini yang dieksekusi.
+function applyPendingMigrations() {
+  try {
+    const files = readdirSync(MIGRATIONS_DIR)
+      .filter((f) => /^(\d+)-.*\.sql$/.test(f))
+      .sort();
+    const current = db.prepare('PRAGMA user_version').get().user_version;
+    for (const file of files) {
+      const m = file.match(/^(\d+)-(.*\.sql)$/);
+      if (!m) continue;
+      const version = parseInt(m[1], 10);
+      if (version > current) {
+        db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
+        console.log(`Migrasi dijalankan: ${file} (versi ${current} -> ${version})`);
+      }
+    }
+  } catch (err) {
+    // Folder migrasi belum ada bukan hal fatal (misalnya instalasi baru).
+    console.warn('Catatan:', err.message);
+  }
+}
+applyPendingMigrations();
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  try {
+    return

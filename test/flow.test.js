@@ -52,6 +52,8 @@ let tg;
 let base;
 let workspace;
 let calls = 0;
+// Every system + user prompt the fake model got, to check what agents are told.
+const prompts = [];
 const tgSent = [];
 const tgUpdates = [];
 
@@ -75,12 +77,17 @@ before(async () => {
   llm = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
+    if (req.url === '/api/health') {
+      res.end('{"ok":true}');
+      return;
+    }
     if (req.url.endsWith('/models')) {
       res.end('{"data":[]}');
       return;
     }
     calls += 1;
     const { messages } = JSON.parse(body);
+    prompts.push(messages.map((m) => m.content).join('\n'));
     const text = fakeAnswer(messages.at(-1).content);
     // Alternate SSE and plain JSON, like 9router does depending on the upstream provider.
     if (calls % 2) {
@@ -146,7 +153,9 @@ test('setup validates and enables the chosen teams', async () => {
   await call('/api/setup', { method: 'POST', body: { name: 'Courtify', about: 'kontraktor padel', audience: 'pemilik lahan', divisions: ['sosmed', 'it', 'tugas'] } });
   const office = await call('/api/office');
   assert.deepEqual(office.divisions.map((d) => d.id), ['sosmed', 'it', 'tugas']);
-  assert.equal(office.health.ok, true);
+  // The first answer comes before the 9router probe finishes; the next polls carry its result.
+  assert.ok(['checking', 'up'].includes(office.health.state));
+  await until(async () => (await call('/api/office')).health.ok, 'cek 9router');
 });
 
 test('content goes Sari -> review -> release -> Ale -> client approves', async () => {
@@ -207,6 +216,39 @@ test('IT pipeline runs every step and writes files', async () => {
   const owners = (await call('/api/tasks')).filter((t) => t.kind === 'it.step' && t.payload.projectId === id).map((t) => t.agentId);
   assert.deepEqual(owners.sort(), ['bayu', 'fajar', 'joko', 'nadia', 'rani', 'tari']);
   assert.ok(done.dueAt, 'deadline yang di-ACC ikut kesimpan di proyek');
+});
+
+test('rating a step coaches the agent on the next job', async () => {
+  const { projects } = await call('/api/projects');
+  const project = projects.find((p) => p.name === 'Booking Padel');
+  await assert.rejects(call(`/api/projects/${project.id}/rate`, { method: 'POST', body: { step: 'frontend', rating: 'down' } }), /catatan/);
+
+  const { ratings } = await call(`/api/projects/${project.id}/rate`, { method: 'POST', body: { step: 'frontend', rating: 'up', note: 'tombolnya gede, enak di HP' } });
+  assert.equal(ratings.frontend, 'up');
+  await call('/api/coaching/rani/sop', { method: 'PUT', body: { text: 'Selalu pakai font Barlow.' } });
+
+  const rani = await call('/api/coaching/rani');
+  assert.deepEqual(rani.score, { up: 1, down: 0 });
+  assert.equal(rani.examples.length, 1);
+  assert.equal(rani.sopIsDefault, false);
+
+  const before = prompts.length;
+  await call(`/api/projects/${project.id}/revise`, { method: 'POST', body: { step: 'frontend', note: 'warna tombol' } });
+  await until(async () => (await call('/api/projects')).projects.find((p) => p.id === project.id && p.state === 'done'), 'revisi Rani');
+  const ranisPrompt = prompts.slice(before).find((p) => p.includes('Tugas kamu (Frontend)'));
+  assert.match(ranisPrompt, /Selalu pakai font Barlow/);
+  assert.match(ranisPrompt, /\[bagus\] tombolnya gede, enak di HP/);
+  assert.match(ranisPrompt, /Contoh hasil kerjamu yang disukai bos/);
+  assert.match(ranisPrompt, /Booking Padel · Frontend/);
+
+  // Back to the built-in SOP; the other agents never saw Rani's notes.
+  await call('/api/coaching/rani/sop', { method: 'PUT', body: { text: '' } });
+  assert.equal((await call('/api/coaching/rani')).sopIsDefault, true);
+  assert.equal((await call('/api/coaching/bayu')).notes.length, 0);
+
+  await call('/api/coaching/sari/notes', { method: 'POST', body: { rating: 'up', note: 'hook-nya mantap' } });
+  assert.equal((await call('/api/coaching/sari')).notes[0].note, 'hook-nya mantap');
+  await assert.rejects(call('/api/coaching/sari/notes', { method: 'POST', body: { rating: 'up' } }), /catatannya/);
 });
 
 test('a rejected project never starts', async () => {
@@ -338,6 +380,33 @@ test('video upload is analysed and cut into a vertical clip', { skip: !existsSyn
 
   await assert.rejects(call(`/api/videos/${id}/clips`, { method: 'POST', body: { start: 5, end: 2, title: 'x' } }), /gak valid/);
 
+  // Background song: upload, cut a clip with it, and the result has the song under the voice.
+  const songSrc = join(workspace, 'lagu.mp3');
+  const madeSong = spawnSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=6', songSrc]);
+  assert.equal(madeSong.status, 0, madeSong.stderr?.toString());
+  const songUpload = await fetch(`${base}/api/songs?name=Lagu%20Senja.mp3`, { method: 'PUT', body: readFileSync(songSrc) });
+  assert.equal(songUpload.status, 201);
+  const song = await songUpload.json();
+  assert.equal(song.name, 'Lagu Senja');
+  assert.ok(Math.abs(song.duration - 6) < 0.5);
+  assert.equal((await fetch(base + song.url)).status, 200);
+
+  const junk = await fetch(`${base}/api/songs?name=rusak.mp3`, { method: 'PUT', body: 'bukan lagu' });
+  assert.equal(junk.status, 400);
+  assert.equal((await call('/api/songs')).length, 1, 'file rusak gak ikut kesimpan');
+  await assert.rejects(call(`/api/videos/${id}/clips`, { method: 'POST', body: { start: 0, end: 16, title: 'x', songId: song.id, songStart: 9 } }), /Mulai lagu/);
+
+  await call(`/api/videos/${id}/clips`, { method: 'POST', body: { start: 0, end: 16, title: 'Pakai lagu', layout: 'original', songId: song.id, songMode: 'mix', songVolume: 40 } });
+  await assert.rejects(call(`/api/songs/${song.id}`, { method: 'DELETE' }), /409/);
+  const withSong = await until(async () => (await call('/api/videos')).find((v) => v.id === id).clips.find((x) => x.title === 'Pakai lagu' && x.state === 'done'), 'klip berlagu', 30_000);
+  assert.deepEqual(withSong.song, { name: 'Lagu Senja', mode: 'mix', volume: 40 });
+  const songProbe = spawnSync(ffmpeg, ['-hide_banner', '-i', join(workspace, 'clips', withSong.url.split('/').at(-1))]).stderr.toString();
+  assert.match(songProbe, /Duration: 00:00:16/);
+  assert.match(songProbe, /Audio: aac/);
+
+  await call(`/api/songs/${song.id}`, { method: 'DELETE' });
+  assert.equal((await call('/api/videos')).find((v) => v.id === id).clips.find((x) => x.title === 'Pakai lagu').song.name, 'lagu yang udah dihapus');
+
   // A pure tone usually yields no words; either way the subtitle request must be handled honestly.
   if (!video.hasTranscript) {
     await assert.rejects(call(`/api/videos/${id}/clips`, { method: 'POST', body: { start: 0, end: 16, title: 's', subtitles: true } }), /transkrip/);
@@ -348,7 +417,7 @@ test('failed tasks surface on the agent and can be retried', async () => {
   const before = calls;
   llm.removeAllListeners('request');
   llm.on('request', (req, res) => {
-    if (req.url.endsWith('/models')) return res.end('{}');
+    if (req.url === '/api/health' || req.url.endsWith('/models')) return res.end('{}');
     calls += 1;
     res.writeHead(429, { 'Content-Type': 'application/json' });
     res.end('{"error":"rate limited"}');

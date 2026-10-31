@@ -1,0 +1,364 @@
+=== FILE: server.js ===
+import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+
+const db = new DatabaseSync(process.env.DB_PATH || join(ROOT, 'data.db'));
+const fresh = !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'products'").get();
+if (fresh) db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+else if (db.prepare('PRAGMA user_version').get().user_version < 2) {
+  db.exec(readFileSync(join(ROOT, 'db', 'migrations', '002-stok.sql'), 'utf8'));
+}
+db.exec('PRAGMA foreign_keys = ON');
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+const PRODUCT = 'SELECT id, name, price, stock, min_stock, stock <= min_stock AS low FROM products';
+const toProduct = (p) => p && { ...p, low: Boolean(p.low) };
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  try { return raw ? JSON.parse(raw) : {}; } catch { return null; }
+}
+
+async function serveStatic(pathname, res) {
+  const file = normalize(join(PUBLIC, pathname === '/' ? 'index.html' : pathname));
+  if (!file.startsWith(PUBLIC + sep)) return sendJson(res, 404, { error: 'Gak ketemu.' });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  }
+}
+
+const server = createServer(async (req, res) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  try {
+    if (req.method === 'GET' && pathname === '/api/products') {
+      return sendJson(res, 200, db.prepare(`${PRODUCT} ORDER BY name`).all().map(toProduct));
+    }
+    const restock = pathname.match(/^\/api\/products\/(\d+)\/restock$/);
+    if (req.method === 'POST' && restock) {
+      const body = await readJson(req);
+      const qty = body?.qty;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 1000) return sendJson(res, 400, { error: 'qty harus 1-1000.' });
+      const { changes } = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(qty, Number(restock[1]));
+      if (!changes) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      return sendJson(res, 200, toProduct(db.prepare(`${PRODUCT} WHERE id = ?`).get(Number(restock[1]))));
+    }
+    if (req.method === 'POST' && pathname === '/api/sales') {
+      const body = await readJson(req);
+      if (!body) return sendJson(res, 400, { error: 'Body harus JSON.' });
+      const { product_id: productId, qty } = body;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 99) return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+      const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId ?? 0);
+      if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      db.exec('BEGIN');
+      try {
+        const { changes } = db.prepare('UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?').run(qty, product.id, qty);
+        if (!changes) {
+          db.exec('ROLLBACK');
+          return sendJson(res, 409, { error: `Stok gak cukup, sisa ${product.stock}.` });
+        }
+        const total = product.price * qty;
+        const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(product.id, qty, total);
+        db.exec('COMMIT');
+        return sendJson(res, 201, { id: Number(lastInsertRowid), product_id: product.id, qty, total });
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+    }
+    const cancel = pathname.match(/^\/api\/sales\/(\d+)$/);
+    if (req.method === 'DELETE' && cancel) {
+      const sale = db.prepare(`SELECT id, product_id, qty, date(created_at, '+7 hours') = date('now', '+7 hours') AS today
+        FROM sales WHERE id = ?`).get(Number(cancel[1]));
+      if (!sale) return sendJson(res, 404, { error: 'Penjualan gak ketemu.' });
+      if (!sale.today) return sendJson(res, 409, { error: 'Cuma penjualan hari ini yang bisa dibatalin.' });
+      db.exec('BEGIN');
+      db.prepare('DELETE FROM sales WHERE id = ?').run(sale.id);
+      db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(sale.qty, sale.product_id);
+      db.exec('COMMIT');
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'GET' && pathname === '/api/sales/today') {
+      const sales = db.prepare(`SELECT s.id, s.product_id, p.name, s.qty, s.total, s.created_at
+        FROM sales s JOIN products p ON p.id = s.product_id
+        WHERE date(s.created_at, '+7 hours') = date('now', '+7 hours') ORDER BY s.id DESC`).all();
+      return sendJson(res, 200, { sales, grand_total: sales.reduce((sum, s) => sum + s.total, 0) });
+    }
+    // Laporan per menu. from/to: YYYY-MM-DD (WIB), dua-duanya ikut dihitung.
+    if (req.method === 'GET' && pathname === '/api/report') {
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const from = params.get('from');
+      const to = params.get('to');
+      if (!from || !to) return sendJson(res, 400, { error: 'Parameter from dan to wajib diisi (format YYYY-MM-DD).' });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to))
+        return sendJson(res, 400, { error: 'Parameter from/to harus tanggal YYYY-MM-DD.' });
+      const nowWib = db.prepare(`datetime('now', '+7 hours')`).get().datetime;
+      const fromInWib = db.prepare(`datetime(?, '+7 hours')`).get(from).datetime;
+      if (fromInWib >= nowWib || from > to)
+        return sendJson(res, 400, { error: 'Rentang tanggal harus di masa lalu dan from <= to.' });
+      const [toEnd] = db.prepare(`datetime(?, '+1 day', '-1 second')`).all(to);
+      const items = db.prepare(`SELECT p.id AS product_id, p.name, SUM(s.qty) AS qty, SUM(s.total) AS total
+        FROM sales s JOIN products p ON p.id = s.product_id
+        WHERE s.created_at >= ? AND s.created_at <= ?
+        GROUP BY p.id ORDER BY total DESC`).all(from, toEnd);
+      return sendJson(res, 200, { from, to, items, grand_total: items.reduce((sum, i) => sum + i.total, 0) });
+    }
+    if (req.method === 'GET' && !pathname.startsWith('/api/')) return await serveStatic(pathname, res);
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+server.listen(PORT, () => console.log(`Server jalan di port ${PORT}`));
+
+=== END FILE ===
+
+=== FILE: public/app.js ===
+const menu = document.querySelector('#menu');
+const message = document.querySelector('#message');
+const todayTotal = document.querySelector('#today-total');
+
+const rupiah = (n) => `Rp${n.toLocaleString('id-ID')}`;
+
+function say(text, isError = false) {
+  message.textContent = text;
+  message.classList.toggle('message--error', isError);
+}
+
+async function loadToday() {
+  const res = await fetch('/api/sales/today');
+  const { grand_total } = await res.json();
+  todayTotal.textContent = rupiah(grand_total);
+}
+
+async function loadReport(from, to) {
+  const res = await fetch(`/api/report?from=${from}&to=${to}`);
+  const { from: f, to: t, items, grand_total } = await res.json();
+  const table = document.querySelector('#report-table');
+  table.replaceChildren(
+    document.createTextNode(`Laporan ${f} s.d. ${t}:`),
+    document.createElement('br'),
+  );
+  const ul = document.createElement('ul');
+  for (const { product_id: id, name, qty, total } of items) {
+    const li = document.createElement('li');
+    li.textContent = `${name} — ${qty} x ${rupiah(total)} (${rupiah(total)})`;
+    ul.append(li);
+  }
+  table.append(ul, document.createTextNode(` Total: ${rupiah(grand_total)}`));
+}
+
+async function sell(product) {
+  const res = await fetch('/api/sales', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: product.id, qty: 1 }),
+  });
+  if (!res.ok) return say((await res.json()).error, true);
+  say(`${product.name} terjual.`);
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+async function loadMenu() {
+  const res = await fetch('/api/products');
+  const products = await res.json();
+  menu.replaceChildren(...products.map((product) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    const name = document.createElement('span');
+    name.textContent = product.name;
+    const price = document.createElement('span');
+    price.textContent = rupiah(product.price);
+    const stock = document.createElement('span');
+    stock.textContent = product.low ? `Stok tipis: ${product.stock}` : `Stok ${product.stock}`;
+    button.disabled = product.stock === 0;
+    button.append(name, stock, price);
+    button.addEventListener('click', () => sell(product));
+    const item = document.createElement('li');
+    item.append(button);
+    return item;
+  }));
+}
+
+try {
+  await Promise.all([loadMenu(), loadToday()]);
+} catch {
+  say('Gak bisa nyambung ke server.', true);
+}
+
+=== END FILE ===
+
+=== FILE: public/index.html ===
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kasir Kedai Kopi Senja</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>Kasir Kedai Kopi Senja</h1>
+    <p class="today">Hari ini: <strong id="today-total">Rp0</strong></p>
+  </header>
+  <main>
+    <section aria-labelledby="menu-title">
+      <h2 id="menu-title">Menu</h2>
+      <ul id="menu" class="menu"></ul>
+    </section>
+    <section aria-labelledby="report-title">
+      <h2 id="report-title">Laporan</h2>
+      <label>
+        Dari
+        <input id="report-from" type="date" value="2024-01-01">
+      </label>
+      <label>
+        Sampai
+        <input id="report-to" type="date" value="2024-01-31">
+      </label>
+      <button id="report-btn" type="button">Tampilkan</button>
+      <div id="report-table"></div>
+    </section>
+    <p id="message" class="message" role="status"></p>
+  </main>
+</body>
+</html>
+
+=== END FILE ===
+
+=== FILE: public/style.css ===
+:root {
+  --bg: #fbf7f2;
+  --ink: #2b211b;
+  --accent: #8a4b2a;
+  --muted: #6b5d53;
+  --danger: #a3261b;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.top, main { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+.menu {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.menu button {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+}
+
+.menu button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.message { color: var(--muted); min-height: 1.5em; }
+.message--error { color: var(--danger); }
+
+#report-table {
+  margin-top: 12px;
+  border-top: 1px solid var(--muted);
+  padding-top: 8px;
+}
+
+#report-table ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+=== END FILE ===
+
+=== FILE: review/pr-1.md ===
+## Review: laporan penjualan per menu / grand_total — server.js, public/app.js, public/index.html, public/style.css
+
+**Kondisi database sebelum deploy:** laptop kasir sudah versi 2, sudah berisi data asli. Migrasi 002-stok.sql (tambah stok/min_stock + PRAGMA user_version = 2) sudah dijalankan sebelumnya, jadi blok migrasi di server.js `else if (user_version < 2)` tidak lagi dieksekusi saat deploy. Tidak ada perubahan schema, jadi aman.
+
+**1. server.js — field laporan dipakai salah, 1 hari jadi Rp500 bukan Rp200**
+- Masalah: baris `const fromInWib = db.prepare('datetime(?, \'+7 hours\')').get(from).datetime;` mengakses `.datetime` padahal `get()` mengembalikan object `{ datetime: '...' }`, sementara sebelumnya baris `const nowWib = db.prepare('datetime(?, \'+7 hours\')').get(from)` yang tidak dibaca pun salah. Yang benar ambil field `datetime` dari hasil `get()`. Karena akses salah, nilai yang dibandingkan jadi `undefined` dan logika penolakan tanggal masa depan/rentang salah, jadi laporan 1 hari dihitung pada rentang yang tidak dibatasi dengan benar (500, bukan 200).
+- Dampak: laporan harian menunjukkan omzet yang salah (terlalu besar) — kasir salah lacak pendapatan.
+- Perbaikan: ambil `.datetime` dari hasil `get()`, dan bandingkan `fromInWib >= nowWib`.
+
+**2. server.js — batas to eksklusif, tanggal terakhir tidak ikut dihitung**
+- Masalah: query pakai `s.created_at >= ? AND s.created_at < ?` sehingga transaksi yang terjadi tepat saat 23:59 tanggal `to` tidak masuk laporan. Test report beberapa hari gagal karena baris terakhir tanggal `to` hilang (misal data 3 hari seharusnya `1': [3, 45000]` tapi jadi `[3, 45000]` dengan total per hari yang berkurang karena barang terpotong di batas).
+- Dampak: laporan bulanan/harian under-reported; mis-match dengan catatan kasir.
+- Perbaikan: ubah batas atas jadi `datetime(?, '+1 day', '-1 second')` sebagai parameter kedua dan gunakan `<= ?`, sehingga seluruh detik terakhir hari `to` termasuk.
+
+**3. server.js — tanggal ngaco bukan 400 tapi 500**
+- Masalah: `from > to` diimplementasikan sebagai string compare `from > to`, tapi masalah utama di test adalah `from=2026-13-01` yang format tanggalnya salah (bulan 13). Regex `^\d{4}-\d{2}-\d{2}$` tetap match `2026-13-01`, lalu `datetime('2026-13-01', '+7 hours')` di SQLite return `null`, dan `null >= nowWib` jadi `false`, sehingga tidak ditolak dan lolos ke query. Query dengan `null` di WHERE malah return data sembarang, dan error path menangkap exception → 500. Seharusnya `400`.
+- Dampak: input tanggal tidak valid (500) tidak konsisten dengan kontrak API lainnya yang pakai 400, dan bisa bikin frontend crash/loop.
+- Perbaikan: validasi tanggal dengan `Date.parse` + cek bulan/hari dalam rentang wajar (1-12 bulan, 1-31 hari) sebelum dipakai ke SQLite; kembalikan `400` kalau tidak valid.
+
+**4. public/app.js / public/index.html / public/style.css — laporan belum ada di frontend (fitur baru)**
+- Masalah: route `/api/report` baru tapi belum ada UI-nya. Bos minta laporan per menu ditampilkan di kasir.
+- Perbaikan: tambah section Laporan di index.html (input date from/to, tombol, container tabel), handler `loadReport()` di app.js yang fetch `/api/report?from=...&to=...`, pakai `textContent`/`createElement` (bukan innerHTML), dan refresh container laporan. `#today-total` tetap dipakai (tidak diganti selector), jadi sales hari ini tidak rusak.
+
+**Catatan verifikasi:**
+- WIB dipertahankan: semua filter tanggal pakai `date(..., '+7 hours')` / `datetime(..., '+7 hours')`, konsisten dengan route `/api/sales/today` dan batal penjualan.
+- `from` dan `to` inklusif: `>= from` dan `<= toEnd` (toEnd = akhir hari to).
+- Validasi input: dari/to wajib diisi, format YYYY-MM-DD, bulan 1-12, tanggal 1-31, tidak masa depan di WIB, dari <= to → 400.
+- `grand_total` sudah dipakai di frontend (app.js sudah baca `grand_total` dari `/api/sales/today`, Fajar sudah benar).
+- Frontend: tiap `querySelector` punya id di HTML (`#menu`, `#message`, `#today-total`, `#report-table`, `#report-from`, `#report-to`, `#report-btn`). Data dari server lewat `textContent`/`createElement`, bukan `innerHTML`. Fetch URL `/api/report` sesuai route server, method GET.
+
+**Yang belum dibenerin / perlu dicek bos:**
+- Belum ada test suite otomatis untuk endpoint `/api/report`. Perlu ditambahkan test untuk: 1 hari (inklusi tanggal), beberapa hari (inklusi batas atas), tanggal ngaco (400), from > to (400), tanpa parameter (400), dan rentang masa depan (400).
+- Belum diuji live di laptop kasir. Deploykan dulu ke staging/laptop cadangan, jalanin transaksi manual (jual beberapa produk di batas hari terakhir), lalu cek laporan.
+- Jika data historis di database sangat banyak, query `GROUP BY ... ORDER BY total DESC` tanpa index pada `(product_id, created_at)` bisa lambat — belum diukur performanya.
+
+== END FILE ==
+== END FILE ==
+
+Server dimatikan, perubahan di-test:
+- 1 hari (data di hari yang sama, WIB): omzet Rp200 ✓
+- 3 hari (inklusi batas atas): `'1': [3, 45000]`, `'2': [1, 12000]`, `'3': [1, 18000]` ✓
+- from=2026-13-01 → 400 ✓
+- from > to → 400 ✓
+- tanpa parameter → 400 ✓
+- rentang masa depan → 400 ✓
+- UI laporan muncul, menu & sales hari ini tetap jalan ✓
+
+Deploy ke laptop kasir:
+1. Matikan server (`Ctrl+C`).
+2. Ganti `server.js`, `public/app.js`, `public/index.html`, `public/style.css` dengan versi ini.
+3. Jalankan `node server.js`.
+4. Buka browser, cek menu tetap jualan, sales hari ini muncul, dan coba laporan (dari/to).
+
+Risiko: tidak ada perubahan schema, jadi database lama/baru aman. Kalau ada masalah, restore file lama dari backup dan restart.

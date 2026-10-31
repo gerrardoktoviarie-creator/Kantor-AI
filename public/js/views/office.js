@@ -420,8 +420,8 @@ export function createOfficeView({ onOffice }) {
 
   return {
     async show() {
-      office.start();
       await refresh();
+      office.start();
       if (selectedId) showAgent(selectedId);
     },
     hide() {

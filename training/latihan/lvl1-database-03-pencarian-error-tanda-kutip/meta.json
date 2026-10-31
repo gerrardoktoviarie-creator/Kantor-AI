@@ -1,0 +1,1 @@
+{ "agent": "fajar", "title": "Pencarian produk error kalau ada tanda kutip", "lesson": "Teks dari pengguna gak boleh digabung ke string SQL. Selalu prepared statement dengan parameter (?), termasuk buat LIKE: kirim '%' + q + '%' sebagai parameter." }

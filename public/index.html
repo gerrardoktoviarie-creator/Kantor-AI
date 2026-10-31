@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kantor AI</title>
+  <title>RetroGrid</title>
   <meta name="description" content="Kantor virtual berisi agent AI per divisi.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,7 +16,7 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="brand__name">Kantor AI</span>
+      <span class="brand__name">RetroGrid</span>
       <span class="brand__business" data-hook="business-name"></span>
     </div>
     <nav class="nav" aria-label="Menu utama" data-hook="nav" hidden>
@@ -27,6 +27,7 @@
       <a class="nav__link" href="#tugas" data-division="tugas">Tugas</a>
       <a class="nav__link" href="#iklan" data-division="marketing">Iklan</a>
       <a class="nav__link" href="#stok" data-division="admin">Stok</a>
+      <a class="nav__link" href="#latih">Latih tim</a>
       <a class="nav__link" href="#pemakaian">Pemakaian AI</a>
     </nav>
     <p class="health" data-hook="health"><span class="dot"></span><span>Ngecek 9router…</span></p>
@@ -36,7 +37,7 @@
   <main class="page">
     <section class="view setup" data-view="setup" aria-labelledby="setup-title" hidden>
       <div class="setup__top">
-        <p class="setup__brand">Kantor AI</p>
+        <p class="setup__brand">RetroGrid</p>
         <div class="steps-bar" data-hook="setup-bar" aria-hidden="true"><span></span><span></span><span></span></div>
         <p class="progress" data-hook="setup-progress"></p>
       </div>
@@ -164,8 +165,11 @@
 
     <section class="view" data-view="konten" aria-labelledby="konten-title" hidden>
       <div class="view__head">
-        <h1 id="konten-title">Konten sosmed</h1>
-        <p>Sari nulis naskah, kamu cek, Ale yang jelasin ke klien.</p>
+        <div>
+          <h1 id="konten-title">Konten sosmed</h1>
+          <p>Sari nulis naskah, kamu cek, Ale yang jelasin ke klien.</p>
+        </div>
+        <div class="crew" data-crew="sosmed" aria-hidden="true"></div>
       </div>
 
       <div class="grid-2">
@@ -227,9 +231,13 @@
 
     <section class="view" data-view="klip" aria-labelledby="klip-title" hidden>
       <div class="view__head">
-        <h1 id="klip-title">Klip video</h1>
-        <p>Upload video panjang, Dimas cariin bagian yang padat omongan, kamu pilih dan potong.</p>
+        <div>
+          <h1 id="klip-title">Klip video</h1>
+          <p>Upload video panjang, Dimas cariin bagian yang padat omongan, kamu pilih dan potong. Lagu latar bisa ditempel pas motong.</p>
+        </div>
+        <div class="crew" data-crew="sosmed" aria-hidden="true"></div>
       </div>
+      <div class="grid-2">
       <section class="panel" aria-labelledby="upload-title">
         <h2 id="upload-title">Upload video</h2>
         <form class="form" data-hook="upload-form">
@@ -242,13 +250,31 @@
           <button class="btn btn--primary" type="submit">Upload &amp; kasih ke Dimas</button>
         </form>
       </section>
+      <section class="panel" aria-labelledby="song-title">
+        <h2 id="song-title">Lagu latar</h2>
+        <form class="form" data-hook="song-form">
+          <div class="field">
+            <label for="song-file">File lagu (mp3, m4a, wav, ogg, flac · maks 50 MB)</label>
+            <input id="song-file" name="file" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.opus,.flac" required>
+          </div>
+          <progress class="upload-progress" data-hook="song-progress" max="100" value="0" hidden></progress>
+          <p class="error-text" data-hook="song-error" role="alert"></p>
+          <button class="btn" type="submit">Upload lagu</button>
+        </form>
+        <p class="panel__hint">Pakai lagu yang kamu punya hak pakainya. Lagu berhak cipta bisa bikin klip dibisukan atau diturunin sama TikTok/IG.</p>
+        <ul class="list song-list" data-hook="song-list"></ul>
+      </section>
+      </div>
       <ul class="list" data-hook="video-list"></ul>
     </section>
 
     <section class="view" data-view="it" aria-labelledby="it-title" hidden>
       <div class="view__head">
-        <h1 id="it-title">IT &amp; Programmer</h1>
-        <p>Nadia riset, Tari desain, Joko database, Fajar backend, Rani frontend, Bayu review.</p>
+        <div>
+          <h1 id="it-title">IT &amp; Programmer</h1>
+          <p>Nadia riset, Tari desain, Joko database, Fajar backend, Rani frontend, Bayu review.</p>
+        </div>
+        <div class="crew" data-crew="it" aria-hidden="true"></div>
       </div>
       <div class="grid-2">
         <section class="panel" aria-labelledby="project-form-title">
@@ -289,12 +315,21 @@
         </section>
       </div>
       <ul class="list" data-hook="project-list"></ul>
+      <section class="panel" aria-labelledby="coach-title">
+        <h2 id="coach-title">Latih tim IT</h2>
+        <p class="panel__hint">SOP sama catatanmu dibaca agent tiap kali kerja. Bagian proyek yang kamu nilai "Bagus" jadi contoh buat proyek berikutnya.</p>
+        <div class="chips" role="group" aria-label="Pilih agent" data-hook="coach-agents"></div>
+        <div class="coach" data-hook="coach-body"></div>
+      </section>
     </section>
 
     <section class="view" data-view="tugas" aria-labelledby="tugas-title" hidden>
       <div class="view__head">
-        <h1 id="tugas-title">Tugas dari Classroom</h1>
-        <p data-hook="classroom-status"></p>
+        <div>
+          <h1 id="tugas-title">Tugas dari Classroom</h1>
+          <p data-hook="classroom-status"></p>
+        </div>
+        <div class="crew" data-crew="tugas" aria-hidden="true"></div>
       </div>
       <section class="panel" data-hook="classroom-setup" hidden></section>
       <section class="panel" aria-labelledby="telegram-title">
@@ -310,8 +345,11 @@
 
     <section class="view" data-view="iklan" aria-labelledby="iklan-title" hidden>
       <div class="view__head">
-        <h1 id="iklan-title">Marketing iklan</h1>
-        <p>Raka baca laporan iklanmu, Wulan cariin target audiens buat dites.</p>
+        <div>
+          <h1 id="iklan-title">Marketing iklan</h1>
+          <p>Raka baca laporan iklanmu, Wulan cariin target audiens buat dites.</p>
+        </div>
+        <div class="crew" data-crew="marketing" aria-hidden="true"></div>
       </div>
       <div class="grid-2">
         <section class="panel" aria-labelledby="ads-form-title">
@@ -366,8 +404,11 @@
 
     <section class="view" data-view="stok" aria-labelledby="stok-title" hidden>
       <div class="view__head">
-        <h1 id="stok-title">Admin &amp; stok</h1>
-        <p>Dewi jaga stok dan ngabarin kalau tipis, Rudi bikin rekap tiap Senin.</p>
+        <div>
+          <h1 id="stok-title">Admin &amp; stok</h1>
+          <p>Dewi jaga stok dan ngabarin kalau tipis, Rudi bikin rekap tiap Senin.</p>
+        </div>
+        <div class="crew" data-crew="admin" aria-hidden="true"></div>
       </div>
       <div class="grid-2">
         <section class="panel" aria-labelledby="product-form-title">
@@ -461,6 +502,17 @@
           <ul class="list" data-hook="stock-recaps"></ul>
         </section>
       </div>
+    </section>
+
+    <section class="view" data-view="latih" aria-labelledby="team-title" hidden>
+      <div class="view__head">
+        <h1 id="team-title">Latih tim</h1>
+        <p>Atur SOP, pasang skill, dan kasih catatan buat tiap agent. Semuanya dibaca tiap kali mereka kerja atau ngobrol sama kamu.</p>
+      </div>
+      <section class="panel" aria-label="Pilih agent">
+        <div class="chips coach__groups" role="group" aria-label="Agent per divisi" data-hook="team-agents"></div>
+        <div class="coach" data-hook="team-body"></div>
+      </section>
     </section>
 
     <section class="view" data-view="pemakaian" aria-labelledby="usage-title" hidden>

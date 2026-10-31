@@ -1,0 +1,1 @@
+{ "agent": "fajar", "title": "Lvl 3 · Halaman produk loncat dan total salah", "lesson": "Pagination: OFFSET = (page - 1) * limit, batasi limit, validasi page/limit sebagai bilangan bulat positif, LIMIT/OFFSET lewat parameter. Total dihitung pakai COUNT(*) dengan filter yang sama persis dengan query datanya." }

@@ -1,4 +1,12 @@
-# Kantor AI
+# RetroGrid
+
+## Version v1.0.0 (2026-10-31)
+
+- Branding: semua penyebutan "Kantor AI" diganti menjadi **RetroGrid**.
+- Sistem sprite‑atlas mempercepat render 10+ agen hingga ~60 fps.
+- Integrasi Telegram fully functional (test message, otomatisasi notifikasi).
+- Bug rendering (karakter terpotong / melayang) sudah diperbaiki.
+- Lihat **CHANGELOG.md** untuk detail lengkap.
 
 Kantor virtual berisi agent AI per divisi. Tiap agent punya meja di denah pixel, jalan ke mejanya kalau lagi kerja, dan nongol di "Nunggu kamu cek" kalau hasilnya perlu kamu lihat.
 
@@ -18,7 +26,7 @@ Fitur lain:
 - **Klip + subtitle**: video ditranskrip lokal pakai whisper.cpp, Dimas milih momen dari isi omongan, klip bisa ditempel subtitle gaya TikTok.
 - **Jalanin proyek IT**: tombol Jalankan nyalain `server.js` proyek di port 4300+, log-nya kelihatan, dan Bayu bisa disuruh benerin pakai log error itu.
 - **Telegram**: tugas baru dan pengingat deadline (Mira), stok tipis (Dewi), rekap mingguan (Rudi). Bisa pakai bot sendiri atau bot Hermes.
-- **Hermes**: kalau [Hermes Agent](https://github.com/NousResearch/hermes-agent) terpasang, Kantor AI bisa ngirim pesan lewat bot Hermes, dan Hermes dapet skill buat nyuruh kantor dari Telegram ("kantor gimana?", "suruh Dewi catat kopi keluar 10").
+- **Hermes**: kalau [Hermes Agent](https://github.com/NousResearch/hermes-agent) terpasang, RetroGrid bisa ngirim pesan lewat bot Hermes, dan Hermes dapet skill buat nyuruh kantor dari Telegram ("retrogrid gimana?", "suruh Dewi catat kopi keluar 10").
 
 ## Pasang
 
@@ -30,7 +38,7 @@ Butuh AI yang kompatibel OpenAI, misalnya [9router](https://www.npmjs.com/packag
 irm https://raw.githubusercontent.com/gerrardoktoviarie-creator/Kantor-AI/main/install.ps1 | iex
 ```
 
-Node.js dipasang lewat winget kalau belum ada, Kantor AI ditaruh di `%USERPROFILE%\kantor-ai`, nyala sendiri tiap laptop hidup, dan browser langsung kebuka ke wizard.
+Node.js dipasang lewat winget kalau belum ada, RetroGrid ditaruh di `%USERPROFILE%\retrogrid`, nyala sendiri tiap laptop hidup, dan browser langsung kebuka ke wizard.
 
 **VPS Linux (Debian/Ubuntu)**, login SSH, tempel:
 
@@ -44,17 +52,17 @@ Koneksi ke VPS masih http biasa. Kalau punya domain, taruh di depan Caddy biar d
 
 ```
 sudo apt install caddy
-echo 'kantor.domainmu.com { reverse_proxy localhost:4100 }' | sudo tee /etc/caddy/Caddyfile
+echo 'retrogrid.domainmu.com { reverse_proxy localhost:4100 }' | sudo tee /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-Habis itu ganti `PUBLIC_URL=https://kantor.domainmu.com` di `.env`, tutup port 4100 di firewall, dan `sudo systemctl restart kantor-ai`.
+Habis itu ganti `PUBLIC_URL=https://retrogrid.domainmu.com` di `.env`, tutup port 4100 di firewall, dan `sudo systemctl restart retrogrid`.
 
 **Manual** (semua OS): butuh Node.js 22.13+.
 
 ```
-git clone https://github.com/gerrardoktoviarie-creator/Kantor-AI.git kantor-ai
-cd kantor-ai
+git clone https://github.com/gerrardoktoviarie-creator/Kantor-AI.git retrogrid
+cd retrogrid
 cp .env.example .env    # isi LLM_URL dan LLM_KEY
 npm start
 ```
@@ -72,8 +80,8 @@ Tes: `npm test` (pakai AI palsu, jadi gak makan kuota).
 
 Kalau Hermes kepasang di komputer yang sama, buka halaman **Tugas**:
 
-- **Pakai bot Hermes**: semua pesan Kantor AI dikirim lewat bot Telegram Hermes ke chat utamanya. Kantor AI cuma ngirim, gak baca pesan masuk, jadi gak rebutan sama Hermes.
-- **Pasang skill Kantor AI ke Hermes**: nyalin `hermes/kantor-ai/SKILL.md` ke folder skill Hermes. Habis itu Hermes bisa baca status kantor dan nyuruh agent lewat API lokal.
+- **Pakai bot Hermes**: semua pesan RetroGrid dikirim lewat bot Telegram Hermes ke chat utamanya. RetroGrid cuma ngirim, gak baca pesan masuk, jadi gak rebutan sama Hermes.
+- **Pasang skill RetroGrid ke Hermes**: nyalin `hermes/retrogrid/SKILL.md` ke folder skill Hermes. Habis itu Hermes bisa baca status kantor dan nyuruh agent lewat API lokal.
 
 ## Pengaturan (.env)
 
@@ -95,6 +103,6 @@ Contoh lengkapnya di `.env.example`.
 
 - Semua data (database, video, klip, proyek IT, token Google) ada di folder `workspace/`. Folder itu, `.env`, dan `bin/` gak ikut ke git.
 - Link preview klien (`/klien/...`) gak butuh login; tiap klien punya kode rahasia sendiri di link-nya.
-- Proyek IT yang dijalankan cuma dapet variabel lingkungan minimum (bukan token/key Kantor AI). Proyek yang butuh package npm harus di-`npm install` manual dulu.
+- Proyek IT yang dijalankan cuma dapet variabel lingkungan minimum (bukan token/key RetroGrid). Proyek yang butuh package npm harus di-`npm install` manual dulu.
 - Proyek IT dan analisis ditulis model AI. Hasilnya draf kerja: cek dulu sebelum dipakai beneran.
 - Agent ngerjain satu tugas dalam satu waktu (antrean), biar akun AI gratisan gak kena limit.

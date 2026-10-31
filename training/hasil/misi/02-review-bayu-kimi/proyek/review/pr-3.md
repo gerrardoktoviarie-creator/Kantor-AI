@@ -1,0 +1,7 @@
+## TEMUAN REVIEW (review/pr-3.md)
+
+1. **server.js — migrasi versi 3 terpatah jadi `else if` bersarang (SyntaxError).** Blok `else if` untuk migrasi 002-stok.sql diakhiri `;` lalu diikuti `else if` versi 3 tanpa kurung kurawal, sehingga sintaksis rusak dan server mati saat start di semua kondisi (versi 1, 2, maupun baru). Dampak: server tidak bisa jalan sama sekali, semua fitur kasir mati. Diperbaiki dengan memisahkan jadi dua statement `if` independen (versi 1→2 lalu 2→3), jadi migrasi berjalan berurutan dan aman.
+2. **db/migrations/003-kategori.sql — kolom kategori awalnya `NOT NULL` tanpa DEFAULT (klaim awal Fajar).** Versi yang dikirim bos sudah pakai `DEFAULT 'minuman'`, jadi aman: migrasi ke database lama (versi 2 berisi stok) jalan tanpa error NOT NULL, dan data stok tidak hilang. Kolom baru punya DEFAULT, migrasi jalan.
+3. **db/schema.sql sudah benar — ada DEFAULT, user_version = 3, insert produk awal.** Database baru langsung punya kolom `category` dengan DEFAULT 'minuman', PRAGMA user_version 3, dan 4 menu awal. Instalasi baru langsung punya kategori.
+4. **server.js — query produk sudah urut per kategori (`ORDER BY category, name`) dan query sudah baca field `category`.** Field `category` masuk ke `PRODUCT` dan `toProduct` tetap memproteksi `low` dengan Boolean. Restock dan batal tidak terpengaruh karena tidak menyentuh kolom kategori.
+5. **Semua migrasi diperiksa untuk tiga kondisi.** Versi 1: dua migrasi jalan berturut-turut. Versi 2: hanya migrasi 003. Database baru: schema langsung lengkap.

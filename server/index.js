@@ -16,6 +16,7 @@ import { registerMarketingRoutes } from './marketing.js';
 import { registerStockRoutes, startStockRecaps } from './stock.js';
 import { registerHermesRoutes } from './hermes.js';
 import { registerMeetingRoutes, startDeadlineChecks } from './meetings.js';
+import { registerCoachingRoutes } from './coaching.js';
 
 const router = createRouter();
 registerAuthRoutes(router);
@@ -31,8 +32,9 @@ registerMarketingRoutes(router);
 registerStockRoutes(router);
 registerHermesRoutes(router);
 registerMeetingRoutes(router);
+registerCoachingRoutes(router);
 
-const MEDIA_DIRS = new Set(['uploads', 'clips', 'thumbs']);
+const MEDIA_DIRS = new Set(['uploads', 'clips', 'thumbs', 'music']);
 
 function serveStatic(req, res, pathname) {
   if (pathname.startsWith('/klien/')) return serveFile(req, res, join(PUBLIC_DIR, 'klien.html'));

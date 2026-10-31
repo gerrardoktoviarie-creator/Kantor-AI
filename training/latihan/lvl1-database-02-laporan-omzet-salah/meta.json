@@ -1,0 +1,1 @@
+{ "agent": "fajar", "title": "Angka omzet di laporan kegedean", "lesson": "JOIN ke dua tabel anak sekaligus (item dan pembayaran) bikin baris dobel dan SUM jadi kegedean. Hitung agregat di subquery atau pakai EXISTS, lalu cek hasilnya dengan hitungan manual dari data contoh." }

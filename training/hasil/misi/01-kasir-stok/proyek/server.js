@@ -1,0 +1,284 @@
+// Kasir Kedai Kopi Senja.
+//   GET  /api/products                    daftar menu (+ stock, min_stock, low)
+//   POST /api/products/:id/restock        { qty: 1-1000 } -> restok stok
+//   POST /api/sales                       { product_id, qty } -> catat penjualan, otomatis kurangi stok
+//   DELETE /api/sales/:id                 batalin penjualan hari ini (WIB) -> balikin stok
+//   GET  /api/sales/today                 penjualan hari ini (WIB) + total
+import { createServer } from 'node:http';
+import { readFileSync, readdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+const DB_PATH = process.env.DB_PATH || join(ROOT, 'data.db');
+const MIGRATIONS_DIR = join(ROOT, 'db', 'migrations');
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+// Database dibuka dulu. Cek user_version:
+// - DB baru (versi >= 2)  -> langsung jalankan schema.sql.
+// - DB lama (versi < 2)    -> jalankan migrasi dulu, baru schema.
+// Schema idempoten (IF NOT EXISTS, INSERT OR IGNORE), jadi aman dijalankan berkali-kali.
+function initDb() {
+  const db = new DatabaseSync(DB_PATH);
+  try {
+    const version = db.prepare('PRAGMA user_version').get().user_version;
+    if (version < 2) {
+      const files = readdirSync(MIGRATIONS_DIR)
+        .filter((f) => /^(\d+)-.*\.sql$/.test(f))
+        .sort();
+      let current = version;
+      for (const file of files) {
+        const m = file.match(/^(\d+)-(.*\.sql)$/);
+        if (!m) continue;
+        const v = parseInt(m[1], 10);
+        if (v > current) {
+          db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
+          console.log(`Migrasi dijalankan: ${file} (versi ${current} -> ${v})`);
+          current = v;
+        }
+      }
+    }
+    db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+  } catch (err) {
+    console.error('Gagal inisialisasi database:', err.message);
+    process.exit(1);
+  }
+  return db;
+}
+
+const db = initDb();
+
+// Zona bisnis WIB (+7 jam), dipakai di semua pengecekan waktu.
+function businessDate() {
+  return db.prepare(`SELECT date(datetime('now', '+7 hours')) AS today`).get().today;
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return null;
+  }
+}
+
+async function serveStatic(pathname, res) {
+  const file = normalize(join(PUBLIC, pathname === '/' ? 'index.html' : pathname));
+  if (!file.startsWith(PUBLIC + sep)) return sendJson(res, 404, { error: 'Gak ketemu.' });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  }
+}
+
+function saleRoute(req, res) {
+  const body = req.body;
+
+  // Validasi payload.
+  if (!Number.isInteger(body.qty) || body.qty < 1 || body.qty > 99) {
+    return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+  }
+  if (body.product_id === undefined || body.product_id === null) {
+    return sendJson(res, 400, { error: 'Menu harus dipilih.' });
+  }
+  if (!Number.isInteger(body.product_id)) {
+    return sendJson(res, 400, { error: 'ID menu harus bilangan bulat.' });
+  }
+  const productId = body.product_id;
+  const qty = body.qty;
+
+  db.exec('BEGIN');
+  try {
+    const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId);
+    if (!product) {
+      db.exec('ROLLBACK');
+      return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+    }
+    if (product.stock < qty) {
+      db.exec('ROLLBACK');
+      return sendJson(res, 409, { error: `Stok gak cukup. Tersisa ${product.stock} pcs untuk ${product.name}.` });
+    }
+    const newStock = product.stock - qty;
+    db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+    const total = product.price * qty;
+    const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(productId, qty, total);
+    db.exec('COMMIT');
+    sendJson(res, 201, { id: Number(lastInsertRowid), product_id: productId, qty, total });
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+}
+
+function cancelRoute(req, res) {
+  const body = req.body;
+
+  // Validasi payload.
+  if (!Number.isInteger(body.qty) || body.qty < 1 || body.qty > 99) {
+    return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+  }
+  if (body.product_id === undefined || body.product_id === null) {
+    return sendJson(res, 400, { error: 'Menu harus dipilih.' });
+  }
+  if (!Number.isInteger(body.product_id)) {
+    return sendJson(res, 400, { error: 'ID menu harus bilangan bulat.' });
+  }
+  const productId = body.product_id;
+  const qty = body.qty;
+
+  db.exec('BEGIN');
+  try {
+    const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId);
+    if (!product) {
+      db.exec('ROLLBACK');
+      return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+    }
+    if (product.stock < qty) {
+      db.exec('ROLLBACK');
+      return sendJson(res, 409, { error: `Stok gak cukup. Tersisa ${product.stock} pcs untuk ${product.name}.` });
+    }
+    const newStock = product.stock - qty;
+    db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+    const total = product.price * qty;
+    const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(productId, qty, total);
+    db.exec('COMMIT');
+    sendJson(res, 201, { id: Number(lastInsertRowid), product_id: productId, qty, total });
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+}
+
+function cancelRoute(req, res) {
+  const match = req.url.match(/^\/api\/sales\/(\d+)$/);
+  if (!match) return sendJson(res, 400, { error: 'Format URL batal salah.' });
+  const saleId = parseInt(match[1], 10);
+  if (!Number.isInteger(saleId)) {
+    return sendJson(res, 400, { error: 'ID penjualan harus bilangan bulat.' });
+  }
+
+  const today = businessDate();
+
+  db.exec('BEGIN');
+  try {
+    const row = db.prepare('SELECT id, product_id, qty, total, created_at FROM sales WHERE id = ?').get(saleId);
+    if (!row) {
+      db.exec('ROLLBACK');
+      return sendJson(res, 404, { error: 'Penjualan gak ketemu.' });
+    }
+
+    const saleDate = db.prepare(`SELECT date(?, '+7 hours') AS d`).get(row.created_at).d;
+    if (saleDate !== today) {
+      db.exec('ROLLBACK');
+      return sendJson(res, 409, { error: 'Penjualan selain hari ini (WIB) gak bisa dibatalin.' });
+    }
+
+    db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(row.qty, row.product_id);
+    db.prepare('DELETE FROM sales WHERE id = ?').run(saleId);
+    db.exec('COMMIT');
+    sendJson(res, 200, { id: row.id, cancelled: true });
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+}
+
+const routes = {
+  'GET /api/products': () => {
+    const products = db.prepare(`
+      SELECT id, name, price, stock, min_stock,
+             CASE WHEN stock <= min_stock THEN 1 ELSE 0 END AS low
+      FROM products
+      ORDER BY name
+    `).all().map((p) => ({ ...p, low: !!p.low }));
+    sendJson(globalThis.pendingRes, 200, products);
+  },
+
+  'POST /api/products/:id/restock': async (req, res) => {
+    const match = req.url.match(/^\/api\/products\/(\d+)\/restock$/);
+    if (!match) return sendJson(res, 404, { error: 'Format URL restok salah.' });
+    const productId = parseInt(match[1], 10);
+    if (!Number.isInteger(productId)) {
+      return sendJson(res, 400, { error: 'ID menu harus bilangan bulat.' });
+    }
+
+    const body = await readJson(req);
+    if (!body || typeof body.qty !== 'number' || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 1000) {
+      return sendJson(res, 400, { error: 'Jumlah restok harus bilangan bulat 1-1000.' });
+    }
+
+    const product = db.prepare('SELECT id, stock, min_stock FROM products WHERE id = ?').get(productId);
+    if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+
+    const newStock = product.stock + body.qty;
+    db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, productId);
+    const updated = db.prepare('SELECT id, name, price, stock, min_stock, CASE WHEN stock <= min_stock THEN 1 ELSE 0 END AS low FROM products WHERE id = ?').get(productId);
+    sendJson(res, 200, { ...updated, low: !!updated.low });
+  },
+
+  'POST /api/sales': async (req, res) => {
+    req.body = await readJson(req);
+    return saleRoute(req, res);
+  },
+
+  'DELETE /api/sales/:id': async (req, res) => {
+    req.url = req.url.split('?')[0]; // hapus query string kalau ada
+    return cancelRoute(req, res);
+  },
+
+  'GET /api/sales/today': (req, res) => {
+    const sales = db.prepare(`SELECT s.id, s.product_id, p.name, s.qty, s.total, s.created_at
+      FROM sales s JOIN products p ON p.id = s.product_id
+      WHERE date(s.created_at, '+7 hours') = ?
+      ORDER BY s.id DESC`).all(businessDate());
+    sendJson(res, 200, { sales, total: sales.reduce((sum, s) => sum + s.total, 0) });
+  },
+};
+
+function normalizeUrl(url) {
+  // Path API harus lurus, tanpa query string.
+  const clean = url.split('?')[0];
+  const normalized = clean.endsWith('/') && clean.length > 1 ? clean.slice(0, -1) : clean;
+  return normalized;
+}
+
+const server = createServer(async (req, res) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  const clean = normalizeUrl(pathname);
+  req.url = clean;
+
+  try {
+    if (req.method === 'POST' && /^\/api\/products\/\d+\/restock$/.test(clean)) {
+      return await routes['POST /api/products/:id/restock'](req, res);
+    }
+    if (req.method === 'DELETE' && /^\/api\/sales\/\d+$/.test(clean)) {
+      return await routes['DELETE /api/sales/:id'](req, res);
+    }
+    const route = routes[`${req.method} ${clean}`];
+    if (route) return await route(req, res);
+    if (req.method === 'GET' && !clean.startsWith('/api/')) return await serveStatic(clean, res);
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+server.listen(PORT, () => console.log(`Server jalan di port ${PORT}`));

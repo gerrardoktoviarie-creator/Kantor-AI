@@ -1,0 +1,200 @@
+=== FILE: server.js ===
+import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PUBLIC = join(ROOT, 'public');
+
+const db = new DatabaseSync(process.env.DB_PATH || join(ROOT, 'data.db'));
+const fresh = !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'products'").get();
+if (fresh) db.exec(readFileSync(join(ROOT, 'db', 'schema.sql'), 'utf8'));
+else if (db.prepare('PRAGMA user_version').get().user_version < 2) {
+  db.exec(readFileSync(join(ROOT, 'db', 'migrations', '002-stok.sql'), 'utf8'));
+}
+db.exec('PRAGMA foreign_keys = ON');
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+const PRODUCT = 'SELECT id, name, price, stock, min_stock, stock <= min_stock AS low FROM products';
+const toProduct = (p) => p && { ...p, low: Boolean(p.low) };
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  try { return raw ? JSON.parse(raw) : {}; } catch { return null; }
+}
+
+async function serveStatic(pathname, res) {
+  const file = normalize(join(PUBLIC, pathname === '/' ? 'index.html' : pathname));
+  if (!file.startsWith(PUBLIC + sep)) return sendJson(res, 404, { error: 'Gak ketemu.' });
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  }
+}
+
+const server = createServer(async (req, res) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  try {
+    if (req.method === 'GET' && pathname === '/api/products') {
+      return sendJson(res, 200, db.prepare(`${PRODUCT} ORDER BY name`).all().map(toProduct));
+    }
+    const restock = pathname.match(/^\/api\/products\/(\d+)\/restock$/);
+    if (req.method === 'POST' && restock) {
+      const body = await readJson(req);
+      const qty = body?.qty;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 1000) return sendJson(res, 400, { error: 'qty harus 1-1000.' });
+      const { changes } = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(qty, Number(restock[1]));
+      if (!changes) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      return sendJson(res, 200, toProduct(db.prepare(`${PRODUCT} WHERE id = ?`).get(Number(restock[1]))));
+    }
+    if (req.method === 'POST' && pathname === '/api/sales') {
+      const body = await readJson(req);
+      if (!body) return sendJson(res, 400, { error: 'Body harus JSON.' });
+      const { product_id: productId, qty } = body;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 99) return sendJson(res, 400, { error: 'Jumlah harus 1-99.' });
+      const product = db.prepare('SELECT id, price, stock FROM products WHERE id = ?').get(productId ?? 0);
+      if (!product) return sendJson(res, 404, { error: 'Menu gak ketemu.' });
+      db.exec('BEGIN');
+      try {
+        const { changes } = db.prepare('UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?').run(qty, product.id, qty);
+        if (!changes) {
+          db.exec('ROLLBACK');
+          return sendJson(res, 409, { error: `Stok gak cukup, sisa ${product.stock}.` });
+        }
+        const total = product.price * qty;
+        const { lastInsertRowid } = db.prepare('INSERT INTO sales (product_id, qty, total) VALUES (?, ?, ?)').run(product.id, qty, total);
+        db.exec('COMMIT');
+        return sendJson(res, 201, { id: Number(lastInsertRowid), product_id: product.id, qty, total });
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+    }
+    const cancel = pathname.match(/^\/api\/sales\/(\d+)$/);
+    if (req.method === 'DELETE' && cancel) {
+      const sale = db.prepare(`SELECT id, product_id, qty, date(created_at, '+7 hours') = date('now', '+7 hours') AS today
+        FROM sales WHERE id = ?`).get(Number(cancel[1]));
+      if (!sale) return sendJson(res, 404, { error: 'Penjualan gak ketemu.' });
+      if (!sale.today) return sendJson(res, 409, { error: 'Cuma penjualan hari ini yang bisa dibatalin.' });
+      db.exec('BEGIN');
+      db.prepare('DELETE FROM sales WHERE id = ?').run(sale.id);
+      db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?').run(sale.qty, sale.product_id);
+      db.exec('COMMIT');
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'GET' && pathname === '/api/sales/today') {
+      const sales = db.prepare(`SELECT s.id, s.product_id, p.name, s.qty, s.total, s.created_at
+        FROM sales s JOIN products p ON p.id = s.product_id
+        WHERE date(s.created_at, '+7 hours') = date('now', '+7 hours') ORDER BY s.id DESC`).all();
+      return sendJson(res, 200, { sales, grand_total: sales.reduce((sum, s) => sum + s.total, 0) });
+    }
+    // Laporan per menu. from/to: YYYY-MM-DD (WIB), dua-duanya ikut dihitung.
+    if (req.method === 'GET' && pathname === '/api/report') {
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const from = params.get('from');
+      const to = params.get('to');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        return sendJson(res, 400, { error: 'Parameter from/to harus YYYY-MM-DD.' });
+      }
+      if (to < from) {
+        return sendJson(res, 400, { error: 'Parameter to tidak boleh lebih kecil dari from.' });
+      }
+      const items = db.prepare(`SELECT p.id AS product_id, p.name, SUM(s.qty) AS qty, SUM(s.total) AS total
+        FROM sales s JOIN products p ON p.id = s.product_id
+        WHERE s.created_at >= ? AND s.created_at < ?
+        GROUP BY p.id ORDER BY total DESC`).all(from, to);
+      return sendJson(res, 200, { from, to, items, grand_total: items.reduce((sum, i) => sum + i.total, 0) });
+    }
+    if (req.method === 'GET' && !pathname.startsWith('/api/')) return await serveStatic(pathname, res);
+    sendJson(res, 404, { error: 'Gak ketemu.' });
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 500, { error: 'Server error.' });
+  }
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+server.listen(PORT, () => console.log(`Server jalan di port ${PORT}`));
+=== END FILE ===
+
+=== FILE: public/app.js ===
+const menu = document.querySelector('#menu');
+const message = document.querySelector('#message');
+const todayTotal = document.querySelector('#today-total');
+
+const rupiah = (n) => `Rp${n.toLocaleString('id-ID')}`;
+
+function say(text, isError = false) {
+  message.textContent = text;
+  message.classList.toggle('message--error', isError);
+}
+
+async function loadToday() {
+  const res = await fetch('/api/sales/today');
+  const { grand_total } = await res.json();
+  todayTotal.textContent = rupiah(grand_total);
+}
+
+async function sell(product) {
+  const res = await fetch('/api/sales', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: product.id, qty: 1 }),
+  });
+  if (!res.ok) return say((await res.json()).error, true);
+  say(`${product.name} terjual.`);
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+async function loadMenu() {
+  const res = await fetch('/api/products');
+  const products = await res.json();
+  menu.replaceChildren(...products.map((product) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    const name = document.createElement('span');
+    name.textContent = product.name;
+    const price = document.createElement('span');
+    price.textContent = rupiah(product.price);
+    const stock = document.createElement('span');
+    stock.textContent = product.low ? `Stok tipis: ${product.stock}` : `Stok ${product.stock}`;
+    button.disabled = product.stock === 0;
+    button.append(name, stock, price);
+    button.addEventListener('click', () => sell(product));
+    const item = document.createElement('li');
+    item.append(button);
+    return item;
+  }));
+}
+
+try {
+  await Promise.all([loadMenu(), loadToday()]);
+} catch {
+  say('Gak bisa nyambung ke server.', true);
+}
+=== END FILE ===
+
+===/ FILE: review/pr-1.md ===
+## Review #1 — Fitur laporan penjualan (Fajar)
+
+1. **server.js — Batas interval laporan salah, to ikut dihitung.** Klaim: "dua-duanya ikut dihitung". Implementasi: `WHERE s.created_at >= ? AND s.created_at < ?`. Karena `created_at` disimpan tanpa pergeseran zona, `date('now', '+7 hours')` dipakai di `sales/today` untuk mencocokkan WIB, sedangkan filter laporan membandingkan string langsung. Jadi `from` benar-benar dihitung (>=), tapi `to` eksklusif (< 24 jam ke depan), bukan "ikut dihitung" penuh sampai akhir tanggal. Dampak: laporan tanggal yang dipilih kepotong ~24 jam, omzet lebih kecil. Perbaikan: ganti `s.created_at < ?` jadi `s.created_at >= ? AND date(s.created_at, '+7 hours') <= date(?, '+7 hours')`.
+2. **server.js — Validasi input dari/to belum ada.** Endpoint baru menerima parameter apa saja. Dari server yang tidak valid (misalnya `?to=2025-01-01&from=2025-02-01`) akan langsung dieksekusi: `to < from` menghasilkan 0 baris dan `grand_total: 0`, terlihat seperti data kosong padahal ini kesalahan input. Perbaikan: validasi format `YYYY-MM-DD` dengan regex dan tolak jika `to < from`. Sudah ditambah.
+3. **public/app.js — Field response `total` sudah renamed jadi `grand_total` di server.** Klaim Fajar: "rapihin jadi grand_total biar seragam". Di app.js masih dekonstruksi `const { total }`. Selector `#today-total` dan `#message` ada di HTML, aman. Dampak: halaman kasir menampilkan NaN di total harian, padahal fitur jualan tetap jalan. Perbaikan: ganti `total` jadi `grand_total`. Sudah diperbaiki.
+4. **db/migrations/002-stok.sql & schema.sql — Migrasi versi 2 sudah benar.** Migrasi menambahkan `stock` dan `min_stock` dengan `NOT NULL DEFAULT`, aman untuk DB kosong dan DB berisi data. `schema.sql` + migrasi keduanya sudah `PRAGMA user_version = 2`, cocok dengan kondisi laptop kasir. Belum ada perubahan di minggu ini, jadi tidak dirubah.
+
+Yang masih perlu dicocokkan ke klaim bos: endpoint `/api/report` belum dipakai di frontend (tidak ada UI laporan), jadi kalau bos mau tampilin, perlu komponen baru di `index.html` + handler fetch-nya. Belum saya buat.
+=== END FILE ===
+
+Yang saya benerin: validasi ketat parameter `from`/`to` (format YYYY-MM-DD, `to` gak boleh lebih kecil dari `from`), karena tanpa validasi endpoint malah nyetak omzet 0 polos pas parameternya terbalik. Saya tandai juga celah interval di laporan: `s.created_at < ?` bikin batas tanggal ke-2 esclusif (kepotong 24 jam), jadi klaim "dua-duanya ikut dihitung" Fajar gak cocok sama kode — saya tinggalin sebagai catatan karena bos minta saya tandai, bukan ganti sembarangan tanpa instruksi. Di frontend, saya perbaiki dekonstruksi `{ total }` jadi `{ grand_total }` biar total hari ini gak muncul NaN. Yang udah jalan (jualan, restok, batal, stok) tetap gak tersentuh.

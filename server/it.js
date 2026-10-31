@@ -1,8 +1,9 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { WORKSPACE } from './config.js';
-import { db } from './db.js';
-import { enqueue, holdMeeting, personaPrompt, registerHandler, listTasks } from './agents.js';
+import { db, parseJson } from './db.js';
+import { enqueue, getAgent, holdMeeting, personaPrompt, registerHandler, listTasks } from './agents.js';
+import { examplesPrompt, ratingsFor, rateWork } from './coaching.js';
 import { chat, chatJson } from './llm.js';
 import { HttpError, readJson, requireText, safeJoin, sendJson, toId } from './http.js';
 import { checkRunnable, isRunning, logsText, runInfo, startProject, stopProject } from './runner.js';
@@ -122,6 +123,8 @@ Tugas kamu (${step.label}): ${step.task}
 File yang sudah ada dari tim:
 ${projectContext(root)}
 
+${examplesPrompt(step.agent)}
+
 ${FILE_RULES}`,
   });
 
@@ -227,6 +230,7 @@ function toProject(row) {
     hasServer: existsSync(join(root, 'server.js')),
     run: runInfo(row.id),
     failure: lastFailure(row.id),
+    ratings: ratingsFor('project', row.id),
     dueAt: db.prepare("SELECT due_at FROM meetings WHERE kind = 'project' AND ref_id = ? ORDER BY id DESC LIMIT 1").get(row.id)?.due_at ?? null,
   };
 }
@@ -257,7 +261,10 @@ onDecision('project', {
 export function registerItRoutes(router) {
   router.get('/api/projects', (req, res) => {
     sendJson(res, 200, {
-      steps: STEPS.map(({ id, agent, label }) => ({ id, agent, label })),
+      steps: STEPS.map(({ id, agent, label }) => {
+        const { name, role, look } = getAgent(agent);
+        return { id, agent, label, name, role, look };
+      }),
       projects: db.prepare('SELECT * FROM projects ORDER BY id DESC').all().map(toProject),
     });
   });
@@ -299,6 +306,37 @@ Tim ngerjain berurutan: ${STEPS.map((s) => s.label).join(' → ')}.`,
       projectId: project.id, step: step.id, note, only: true,
     });
     sendJson(res, 200, { ok: true });
+  });
+
+  // Your verdict on one step. "Bagus" keeps that step's files as an example for the agent's next projects.
+  router.post('/api/projects/:id/rate', async (req, res, { id }) => {
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(toId(id));
+    if (!project) throw new HttpError(404, 'Proyek gak ketemu.');
+    const body = await readJson(req);
+    const step = STEPS.find((s) => s.id === body.step);
+    if (!step) throw new HttpError(400, 'Pilih bagian yang mau dinilai.');
+    const task = db.prepare(`SELECT result FROM tasks WHERE kind = 'it.step' AND state = 'done'
+      AND json_extract(payload, '$.projectId') = ? AND json_extract(payload, '$.step') = ?
+      ORDER BY id DESC LIMIT 1`).get(project.id, step.id);
+    if (!task) throw new HttpError(409, `Bagian ${step.label} belum dikerjain.`);
+
+    const root = join(PROJECT_DIR, project.slug);
+    const files = (parseJson(task.result, {})?.files ?? [])
+      .map((path) => ({ path, file: safeJoin(root, path) }))
+      .filter(({ file }) => file && existsSync(file));
+    const content = files.map(({ path, file }) => `=== FILE: ${path} ===\n${readFileSync(file, 'utf8')}`).join('\n\n');
+    const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : '';
+
+    rateWork({
+      agentId: step.agent,
+      refKind: 'project',
+      refId: project.id,
+      part: step.id,
+      rating: body.rating === 'up' ? 1 : body.rating === 'down' ? -1 : 0,
+      note,
+      example: { title: `${project.name} · ${step.label}`, content },
+    });
+    sendJson(res, 200, { ratings: ratingsFor('project', project.id) });
   });
 
   router.post('/api/projects/:id/run', async (req, res, { id }) => {

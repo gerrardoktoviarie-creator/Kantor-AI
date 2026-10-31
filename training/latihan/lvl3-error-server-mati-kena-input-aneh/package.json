@@ -1,0 +1,1 @@
+{ "name": "kurs", "type": "module", "scripts": { "start": "node server.js" } }

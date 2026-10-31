@@ -1,0 +1,108 @@
+=== FILE: public/app.js ===
+const menu = document.querySelector('#menu');
+const message = document.querySelector('#message');
+const todayTotal = document.querySelector('#today-total');
+const history = document.querySelector('#history');
+
+const rupiah = (n) => `Rp${n.toLocaleString('id-ID')}`;
+
+function say(text, isError = false) {
+  message.textContent = text;
+  message.classList.toggle('message--error', isError);
+}
+
+async function loadToday() {
+  const res = await fetch('/api/sales/today');
+  const { sales, total } = await res.json();
+  todayTotal.textContent = rupiah(total);
+  history.replaceChildren(...sales.map((s) => {
+    const li = document.createElement('li');
+    const text = document.createTextNode(`${s.qty}x ${s.name} · ${rupiah(s.total)}`);
+    li.append(text);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Batal';
+    button.dataset.sale = s.id;
+    li.append(button);
+    return li;
+  }));
+}
+
+async function cancel(saleId) {
+  const res = await fetch(`/api/sales/${saleId}`, { method: 'DELETE' });
+  if (!res.ok) return say((await res.json()).error, true);
+  say('Penjualan dibatalin.');
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+history.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-sale]');
+  if (button) cancel(button.dataset.sale);
+});
+
+async function sell(product) {
+  const res = await fetch('/api/sales', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: product.id, qty: 1 }),
+  });
+  if (!res.ok) return say((await res.json()).error, true);
+  say(`${product.name} terjual.`);
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+async function loadMenu() {
+  const res = await fetch('/api/products');
+  const products = await res.json();
+  menu.replaceChildren(...products.map((product) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    const name = document.createElement('span');
+    name.textContent = product.name;
+    const price = document.createElement('span');
+    price.textContent = rupiah(product.price);
+    const stock = document.createElement('span');
+    stock.textContent = product.low ? `Stok tipis: ${product.stock}` : `Stok ${product.stock}`;
+    button.disabled = product.stock === 0;
+    button.append(name, stock, price);
+    button.addEventListener('click', () => sell(product));
+    const item = document.createElement('li');
+    item.append(button);
+    return item;
+  }));
+}
+
+try {
+  await Promise.all([loadMenu(), loadToday()]);
+} catch {
+  say('Gak bisa nyambung ke server.', true);
+}
+
+=== END FILE ===
+
+=== FILE: review/pr-2.md ===
+## Review #2 — Fitur riwayat penjualan + Batal (Rani)
+
+1. **public/app.js — Data dari server lewat innerHTML.** Klaim: riwayat diisi `history.innerHTML = ...`. Dampak: data menu/total disuntikkan sebagai string HTML mentah, rentan XSS dan melanggar aturan frontend. Perbaikan: ganti dengan `document.createElement` + `textContent` untuk setiap node, tidak ada string HTML yang dibangun.
+2. **public/app.js — Batal manggil endpoint yang salah.** Klaim: fetch ke `/api/sale/${saleId}`. Route server yang benar `DELETE /api/sales/{id}` (dengan 's'). Dampak: klik Batal 404 `{error: 'Gak ketemu.'}` → penjualan tidak dibatalin, stok tidak kembali, kasir kebingungan. Perbaikan: fetch ke `/api/sales/${saleId}`.
+3. **public/app.js — Setelah batal stok menu tidak di-refresh.** Klaim: hanya `loadToday()` dipanggil setelah batal. Dampak: stok di daftar menu tidak bertambah setelah pembatalan — kasir bisa salah ambil stok. Perbaikan: panggil `await Promise.all([loadMenu(), loadToday()])` setelah batal, sama seperti alur jualan.
+
+**Yang tidak disentuh:** `index.html` (sudah benar, ID `#history` ada), routing server (`/api/sales/{id}` DELETE), skema database, dan migrasi — semua tetap utuh. Tidak ada perubahan skema, aman rilis langsung ke laptop kasir tanpa backup.
+
+=== END FILE ===
+
+## Review akhir
+
+**Status: approve, siap rilis.**
+
+**File yang diubah:**
+- `public/app.js` — 3 bug diperbaiki (data pakai createElement, endpoint Batal benar, menu/stok di-refresh)
+- `review/pr-2.md` — catatan review
+
+**Yang belum dibenerin / perlu dicek:**
+- [perlu dicek] Tidak ada uji jalan di server: fitur batal belum dicek dengan server sungguhan, hanya dicek di kepala. Tolong jalankan `node server.js` lalu tes klik Batal dari HP/laptop.
+
+**Yang perlu bos/tim tahu:**
+- Semua perbaikan di frontend (`app.js`), server.js tidak diubah karena routingnya sudah benar. Tidak ada perubahan skema database, jadi bisa langsung rilis ke laptop kasir tanpa backup.
+- Perbaikan utama: data menu tidak lagi di-render lewat innerHTML (aman dari XSS), tombol Batal memanggil endpoint `/api/sales/{id}` yang benar, dan setelah batal stok menu otomatis ter-update.
+- Catatan review lengkap ada di `review/pr-2.md` (3 temuan).

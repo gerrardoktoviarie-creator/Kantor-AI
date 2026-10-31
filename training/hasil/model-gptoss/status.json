@@ -1,0 +1,10 @@
+{
+  "lvl1-database-01-skema-rusak": true,
+  "lvl1-database-02-laporan-omzet-salah": true,
+  "lvl1-database-03-pencarian-error-tanda-kutip": true,
+  "lvl2-database-email-dobel-dan-lambat": true,
+  "lvl3-database-halaman-produk-loncat": true,
+  "lvl4-database-migrasi-tanpa-hilang-data": false,
+  "lvl5-database-rekap-bulanan-meleset": true,
+  "lvl6-database-jadwal-lapangan-tabrakan": true
+}

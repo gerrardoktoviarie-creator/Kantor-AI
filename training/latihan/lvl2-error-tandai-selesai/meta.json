@@ -1,0 +1,1 @@
+{ "agent": "bayu", "title": "Lvl 2 · Tombol tandai selesai gak jalan (bug di 2 file)", "lesson": "Bug bisa nyebar di beberapa file: telusuri alurnya dari request sampai data (route, method, tipe id, fungsi store). Saat update, cuma ambil field yang boleh diubah dan validasi tipenya." }

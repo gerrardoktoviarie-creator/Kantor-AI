@@ -1,0 +1,5 @@
+BEGIN;
+ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0);
+ALTER TABLE products ADD COLUMN min_stock INTEGER NOT NULL DEFAULT 5 CHECK (min_stock >= 0);
+PRAGMA user_version = 2;
+COMMIT;

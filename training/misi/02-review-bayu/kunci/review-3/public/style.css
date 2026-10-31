@@ -1,0 +1,45 @@
+:root {
+  --bg: #fbf7f2;
+  --ink: #2b211b;
+  --accent: #8a4b2a;
+  --muted: #6b5d53;
+  --danger: #a3261b;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.top, main { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+.menu {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.menu button {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+}
+
+.menu button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.message { color: var(--muted); min-height: 1.5em; }
+.message--error { color: var(--danger); }

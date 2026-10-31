@@ -1,0 +1,1 @@
+{ "agent": "bayu", "title": "Server gak bisa diakses dan detail catatan ngaco", "lesson": "Port wajib dari process.env.PORT. Data yang gak ada dibalikin 404, bukan 200 null. id dari URL itu string, ubah ke angka dulu sebelum dibandingin." }

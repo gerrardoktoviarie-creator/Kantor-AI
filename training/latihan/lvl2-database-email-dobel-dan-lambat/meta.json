@@ -1,0 +1,1 @@
+{ "agent": "joko", "title": "Lvl 2 · Email pelanggan dobel dan riwayat pesanan lambat", "lesson": "Keunikan yang gak peka huruf besar pakai UNIQUE + COLLATE NOCASE. Nilai status dibatasi CHECK IN (...). Index komposit ngikutin WHERE lalu ORDER BY (mis. user_id, created_at) biar gak ada sort tambahan; cek pakai EXPLAIN QUERY PLAN." }

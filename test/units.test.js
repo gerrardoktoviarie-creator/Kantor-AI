@@ -1,11 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 process.env.NODE_ENV = 'test';
 
-const { extractJson, readSse, stripThinking } = await import('../server/llm.js');
+// Fake Claude Code and Hermes skill folders, so tests never read the real ones.
+const skillRoot = mkdtempSync(join(tmpdir(), 'kantor-skills-'));
+const writeSkill = (source, name, body) => {
+  mkdirSync(join(skillRoot, source, name), { recursive: true });
+  writeFileSync(join(skillRoot, source, name, 'SKILL.md'), `---\nname: ${name}\ndescription: tes ${name}\n---\n\n${body}`);
+};
+writeSkill('claude', 'rapi-kode', '# Rapi\nPakai nama variabel yang jelas.');
+writeSkill('hermes', 'review-ketat', `# Review\n${'x'.repeat(15_000)}`);
+writeSkill('hermes', 'review-lain', `# Lain\n${'y'.repeat(12_000)}`);
+writeSkill('claude', 'imagegen-web', '# Gambar');
+process.env.CLAUDE_SKILLS_DIR = join(skillRoot, 'claude');
+process.env.HERMES_SKILLS_DIR = join(skillRoot, 'hermes');
+// Set before config.js loads .env, so the owner's own choice never leaks into the tests.
+process.env.LLM_AGENT_MODELS = 'bayu = model-kuat, rusak, =tanpa-agent';
+
+const { extractJson, readSse, stripThinking, nextHealth, modelFor } = await import('../server/llm.js');
+const { LLM } = await import('../server/config.js');
 const { parseFiles } = await import('../server/it.js');
-const { pickCandidates, parseSilences, parseDuration } = await import('../server/clips.js');
+const { pickCandidates, parseSilences, parseDuration, musicArgs } = await import('../server/clips.js');
 const { toDueIso } = await import('../server/classroom.js');
 const { safeJoin } = await import('../server/http.js');
 const { toWords, toLines, buildAss } = await import('../server/subtitles.js');
@@ -15,7 +34,8 @@ const { parseNumber, summarizeAds } = await import('../server/marketing.js');
 const { restockSuggestion, recordMove } = await import('../server/stock.js');
 const { db, setSetting } = await import('../server/db.js');
 const { normalizeDebate, parseLocal, defaultDue, checkDeadlines } = await import('../server/meetings.js');
-const { getStatus } = await import('../server/agents.js');
+const { getStatus, personaPrompt } = await import('../server/agents.js');
+const { coachingPrompt, examplesPrompt, rateWork, ratingsFor, DEFAULT_SOP, listSkills, installSkill, SKILL_BUDGET, addNote } = await import('../server/coaching.js');
 
 test('splitMessage keeps every Telegram message under the limit without splitting a task', () => {
   const blocks = Array.from({ length: 13 }, (_, i) => `• Tugas ${i}\n  ${'x'.repeat(600)}`);
@@ -66,6 +86,12 @@ test('extractJson handles chatter before and after the object', () => {
 
 test('stripThinking drops <think> blocks', () => {
   assert.equal(stripThinking('<think>mikir dulu</think>\nJawaban'), 'Jawaban');
+});
+
+test('an agent can get its own model, everyone else keeps the office default', () => {
+  assert.equal(modelFor('bayu'), 'model-kuat');
+  assert.equal(modelFor('sari'), LLM.model);
+  assert.deepEqual(Object.keys(LLM.agentModels), ['bayu'], 'pasangan yang rusak diabaikan');
 });
 
 test('readSse joins deltas and keeps the final usage', () => {
@@ -269,4 +295,86 @@ test('checkDeadlines warns the chair a day before and once more when it is late'
 
   await checkDeadlines(now + 6 * 3_600_000);
   assert.equal(reminded(), 'h24,late');
+});
+
+test('nextHealth waits for a second slow probe but reports a dead 9router at once', () => {
+  const up = { ok: true, state: 'up' };
+  const slow = { ok: false, state: 'slow' };
+  const down = { ok: false, state: 'down' };
+  assert.equal(nextHealth(up, slow, 1), up);
+  assert.equal(nextHealth(up, slow, 2), slow);
+  assert.equal(nextHealth(up, down, 0), down);
+  assert.equal(nextHealth(null, slow, 1), slow);
+});
+
+test('rateWork keeps one verdict per piece of work and only good work as an example', () => {
+  const base = { agentId: 'joko', refKind: 'project', refId: 77, part: 'database' };
+  assert.equal(examplesPrompt('joko'), '');
+  assert.match(coachingPrompt('joko'), /SOP kamu/);
+  assert.ok(coachingPrompt('joko').includes(DEFAULT_SOP.joko));
+
+  rateWork({ ...base, rating: 1, note: 'relasinya jelas', example: { title: 'Toko · Database', content: 'CREATE TABLE x (id INTEGER PRIMARY KEY);' } });
+  assert.match(examplesPrompt('joko'), /Toko · Database/);
+  assert.deepEqual(ratingsFor('project', 77), { database: 'up' });
+
+  // Changing your mind replaces the verdict and drops the example.
+  rateWork({ ...base, rating: -1, note: 'lupa index' });
+  assert.equal(examplesPrompt('joko'), '');
+  assert.deepEqual(ratingsFor('project', 77), { database: 'down' });
+  assert.match(coachingPrompt('joko'), /\[kurang\] lupa index/);
+  assert.doesNotMatch(coachingPrompt('joko'), /relasinya jelas/);
+
+  assert.throws(() => rateWork({ ...base, rating: -1, note: '' }), /catatan/);
+  assert.equal(coachingPrompt('nobody'), '');
+});
+
+test('skills from Claude Code and Hermes go into the prompt, within the budget', () => {
+  const listed = listSkills();
+  assert.deepEqual(listed.map((k) => `${k.source}:${k.name}`), ['claude:imagegen-web', 'claude:rapi-kode', 'hermes:review-ketat', 'hermes:review-lain']);
+  assert.match(listed[0].blocked, /tool/);
+  assert.equal(listed[1].description, 'tes rapi-kode');
+
+  installSkill('fajar', { source: 'claude', name: 'rapi-kode' });
+  installSkill('fajar', { source: 'hermes', name: 'review-ketat' });
+  const prompt = coachingPrompt('fajar');
+  assert.match(prompt, /### Skill: rapi-kode\n# Rapi\nPakai nama variabel/);
+  assert.match(prompt, /lewati langkah yang butuh jalanin perintah/);
+  assert.doesNotMatch(prompt, /description: tes/, 'frontmatter stays out of the prompt');
+
+  assert.ok(15_000 + 12_000 > SKILL_BUDGET);
+  assert.throws(() => installSkill('fajar', { source: 'hermes', name: 'review-lain' }), /gak muat/);
+  assert.throws(() => installSkill('fajar', { source: 'claude', name: 'imagegen-web' }), /butuh tool/);
+  assert.throws(() => installSkill('fajar', { source: 'claude', name: '../../etc' }), /gak ketemu/);
+  assert.doesNotMatch(coachingPrompt('rani'), /### Skill/);
+});
+
+test('every agent gets the work standard, its own SOP and notes written from the panel', () => {
+  for (const id of ['sari', 'ale', 'dimas', 'mira', 'raka', 'wulan', 'dewi', 'rudi', 'bayu']) {
+    const prompt = personaPrompt(id);
+    assert.match(prompt, /Jangan ngarang/, id);
+    assert.ok(prompt.includes(DEFAULT_SOP[id]), `${id} punya SOP bawaan`);
+  }
+  addNote('wulan', { rating: 'down', note: '  hook-nya kurang nyambung sama alasannya  ' });
+  // Trimmed on the way in, so the line ends right after the text.
+  assert.match(personaPrompt('wulan'), /\[kurang\] hook-nya kurang nyambung sama alasannya$/m);
+  assert.doesNotMatch(personaPrompt('raka'), /hook-nya kurang nyambung/);
+  assert.throws(() => addNote('wulan', { rating: 'down', note: ' ' }), /catatannya/);
+  assert.throws(() => addNote('wulan', { rating: 'meh', note: 'x' }), /bagus atau kurang/);
+});
+
+test('musicArgs loops the song, fades it out, and mixes or replaces the clip sound', () => {
+  const mix = musicArgs({ song: 'lagu.mp3', start: 4, mode: 'mix', volume: 30, length: 20, sourceHasAudio: true });
+  assert.deepEqual(mix.input, ['-stream_loop', '-1', '-ss', '4', '-i', 'lagu.mp3']);
+  const graph = mix.output[mix.output.indexOf('-filter_complex') + 1];
+  assert.match(graph, /^\[1:a\]volume=0\.30,afade=t=in:d=0\.3,afade=t=out:st=18\.50:d=1\.5\[music\];/);
+  assert.match(graph, /\[0:a\]\[music\]amix=inputs=2:duration=first:normalize=0\[aout\]$/);
+  assert.deepEqual(mix.output.slice(-4), ['-map', '0:v:0', '-map', '[aout]']);
+
+  const replace = musicArgs({ song: 'lagu.mp3', mode: 'replace', volume: 100, length: 10, sourceHasAudio: true });
+  assert.doesNotMatch(replace.output.join(' '), /amix|\[0:a\]/);
+  // A video with no sound can't be mixed, so it gets the song alone.
+  const silent = musicArgs({ song: 'lagu.mp3', mode: 'mix', volume: 30, length: 10, sourceHasAudio: false });
+  assert.doesNotMatch(silent.output.join(' '), /amix/);
+  // Clips shorter than the fade don't get a negative fade start.
+  assert.match(musicArgs({ song: 'x', mode: 'replace', volume: 50, length: 1, sourceHasAudio: true }).output[1], /st=0\.00/);
 });

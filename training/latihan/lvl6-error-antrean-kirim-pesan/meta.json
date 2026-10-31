@@ -1,0 +1,9 @@
+{
+  "agent": "bayu",
+  "title": "Lvl 6 · Antrean kirim pesan: dobel kirim, retry tanpa ujung, status nyangkut",
+  "attempts": 3,
+  "lesson": "Worker antrean: klaim job secara atomik dulu (UPDATE status='sending' WHERE status='queued'), jangan biarin tick berikutnya ngambil job yang sama selama await. Hitung percobaan di tiap usaha (sukses atau gagal), batasi retry lalu tandai 'failed', dan kembalikan job yang masih boleh dicoba ke 'queued'. Bug yang saling nyambung harus dibenerin bareng, lalu dicek pakai skenario utuh.",
+  "locked": [
+    "lib/gateway.js"
+  ]
+}

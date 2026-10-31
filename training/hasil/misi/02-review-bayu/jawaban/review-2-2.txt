@@ -1,0 +1,146 @@
+=== FILE: public/app.js ===
+const menu = document.querySelector('#menu');
+const message = document.querySelector('#message');
+const todayTotal = document.querySelector('#today-total');
+const history = document.querySelector('#history');
+
+const rupiah = (n) => `Rp${n.toLocaleString('id-ID')}`;
+
+function say(text, isError = false) {
+  message.textContent = text;
+  message.classList.toggle('message--error', isError);
+}
+
+async function loadToday() {
+  const res = await fetch('/api/sales/today');
+  const { sales, total } = await res.json();
+  todayTotal.textContent = rupiah(total);
+  history.replaceChildren(...sales.map((s) => {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = `${s.qty}x ${s.name} · ${rupiah(s.total)}`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Batal';
+    button.dataset.sale = s.id;
+    li.append(span, button);
+    return li;
+  }));
+}
+
+async function cancel(saleId) {
+  const res = await fetch(`/api/sales/${saleId}`, { method: 'DELETE' });
+  if (!res.ok) return say((await res.json()).error, true);
+  say('Penjualan dibatalin.');
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+history.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-sale]');
+  if (button) cancel(button.dataset.sale);
+});
+
+async function sell(product) {
+  const res = await fetch('/api/sales', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: product.id, qty: 1 }),
+  });
+  if (!res.ok) return say((await res.json()).error, true);
+  say(`${product.name} terjual.`);
+  await Promise.all([loadMenu(), loadToday()]);
+}
+
+async function loadMenu() {
+  const res = await fetch('/api/products');
+  const products = await res.json();
+  menu.replaceChildren(...products.map((product) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    const name = document.createElement('span');
+    name.textContent = product.name;
+    const price = document.createElement('span');
+    price.textContent = rupiah(product.price);
+    const stock = document.createElement('span');
+    stock.textContent = product.low ? `Stok tipis: ${product.stock}` : `Stok ${product.stock}`;
+    button.disabled = product.stock === 0;
+    button.append(name, stock, price);
+    button.addEventListener('click', () => sell(product));
+    const item = document.createElement('li');
+    item.append(button);
+    return item;
+  }));
+}
+
+try {
+  await Promise.all([loadMenu(), loadToday()]);
+} catch {
+  say('Gak bisa nyambung ke server.', true);
+}
+
+=== END FILE ===
+
+=== FILE: public/index.html ===
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kasir Kedai Kopi Senja</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>Kasir Kedai Kopi Senja</h1>
+    <p class="today">Hari ini: <strong id="today-total">Rp0</strong></p>
+  </header>
+  <main>
+    <section aria-labelledby="menu-title">
+      <h2 id="menu-title">Menu</h2>
+      <ul id="menu" class="menu"></ul>
+    </section>
+    <section aria-labelledby="history-title">
+      <h2 id="history-title">Penjualan hari ini</h2>
+      <ul id="history" class="history"></ul>
+    </section>
+    <p id="message" class="message" role="status"></p>
+  </main>
+</body>
+</html>
+
+=== END FILE ===
+
+=== FILE: review/pr-2.md ===
+### Temuan
+
+**1. public/app.js — selector #riwayat tidak cocok dengan id HTML #history (halaman mati)**
+- Masalah: `const history = document.querySelector('#riwayat')` tidak menemukan elemen, karena di `public/index.html` elemennya punya `id="history"` (juga dipakai CSS `.history`).
+- Dampak ke kasir: `history` jadi `null`, baris `history.innerHTML = ...` melempar TypeError saat halaman dimuat, seluruh JS berikutnya macet — halaman kasir mati total (tidak bisa jual, tidak bisa lihat menu, tombol Batal tidak hidup).
+- Perbaikan: ganti selector jadi `#history` di app.js, satu-satu sama persis dengan id di HTML.
+
+**2. public/app.js — data penjualan hari ini lewat innerHTML (XSS / injeksi markup)**
+- Masalah: string HTML dirakit manual dan masuk ke `history.innerHTML`, termasuk teks yang berasal dari server (`s.name`) dan atribut `data-sale="${s.id}"`. Nama menu yang tak tervalidasi bisa jadi script atau mengubah struktur daftar.
+- Dampak ke kasir: jika ada menu yang namanya berisi tag/script (termasuk dari input staf restock/produk), bisa dieksekusi di sesi kasir — data tak sah masuk lewat jalur aman.
+- Perbaikan: bangun elemen dengan `document.createElement` + `textContent` (untuk nama), lalu pasang `data-sale` lewat `setAttribute('data-sale', ...)`, dan isi daftar lewat `history.replaceChildren(...)` alih-alih `innerHTML`.
+
+**3. public/app.js — endpoint batal penjualan salah (404 → error)**
+- Masalah: `fetch('/api/sale/${saleId}', { method: 'DELETE' })` memanggil rute `/api/sale/...` (tanpa 's'), sedangkan server hanya menerima DELETE di `/api/sales/(\d+)`.
+- Dampak ke kasir: klik Batal tidak membatalkan apa pun, pesan error muncul, dan daftar penjualan tidak ikut di-refresh karena `loadToday()` tidak dipanggil — kasir terjebak melihat penjualan yang seharusnya batal.
+- Perbaikan: rute jadi `/api/sales/${saleId}`.
+
+**4. public/app.js — stok tombol menu tidak di-refresh setelah batal**
+- Masalah: setelah DELETE sukses hanya `loadToday()` yang dipanggil; `loadMenu()` (penyimpan tampilan stok di setiap tombol menu) tidak dipanggil ulang.
+- Dampak ke kasir: setelah batal, jumlah stok menu yang terjual kembali naik di database tapi label stok di tombol menu tetap menampilkan angka lama — kasir salah lihat ketersediaan dan bisa jualan dengan asumsi stok meleset.
+- Perbaikan: panggil `Promise.all([loadMenu(), loadToday()])` setelah batal, sehingga stok dan daftar penjualan sama-sama terupdate.
+
+**5. public/app.js — data penjualan hari ini lewat innerHTML (ulang pada data server, tetap fatal)**
+- Masalah: sama dengan temuan 2 — baris yang merakit string HTML dengan `${s.name}` dan atribut `data-sale="${s.id}"`.
+- Dampak ke kasir: injeksi markup/script lewat nama menu; data server tidak boleh pernah lewat `innerHTML`.
+- Perbaikan: rebuild baris 19-21 dengan `createElement`/`textContent`/`setAttribute` + `replaceChildren` (lihat temuan 2).
+
+=== END FILE ===
+
+Yang udah jalan aman: restock produk, jual baru, laporan menu (`/api/report` WIB, dari–sampai inklusif, urutan omzet terbesar, pakai `grand_total`), `/api/sales/today` respons `grand_total`/`sales`, dan tampilan statis. Perbaikan hari ini cuma di selector ID, jalan batal, dan cara daftar penjualan diisi biar halaman gak mati dan stok ikut update.
+
+Catatan buat tim: setelah rilis, tes manual klik Batal di satu baris penjualan hari ini — periksa (1) baris hilang, (2) total hari ini turun, (3) label stok tombol menu terupdate, (4) gak muncul error di konsol browser. Kalau ada data penjualan lama sebelum tanggal WIB yang belum dipindah, migrasi tidak mengubah data yang sudah terjual.

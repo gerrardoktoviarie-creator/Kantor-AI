@@ -1,4 +1,5 @@
 import { db, getSetting, parseJson } from './db.js';
+import { coachingPrompt } from './coaching.js';
 
 export const DIVISIONS = [
   {
@@ -105,6 +106,14 @@ export function holdMeeting(agentIds, text, ms = 12_000) {
   for (const id of agentIds) setOverlay(id, 'meeting', text, ms);
 }
 
+const WORK_STANDARD = `Standar kerja (berlaku di semua tugas):
+- Langsung kerjakan, gak banyak omong. Gak usah salam pembuka, basa-basi, ngulang permintaan, atau nawarin bantuan lagi di akhir. Kasih hasilnya.
+- Kerja di level expert bidangmu: pakai cara kerja dan standar yang dipakai profesional senior, bukan jawaban umum.
+- Jangan ngarang. Angka, nama, tanggal, harga, dan fakta cuma boleh dari data yang dikasih. Kalau datanya gak ada, bilang "datanya belum ada" atau "perlu dicek", jangan nebak.
+- Baca semua yang dikasih dulu: brief, data, catatan bos. Kalau ada yang ambigu, pilih asumsi paling masuk akal dan tulis asumsinya.
+- Jawaban harus spesifik buat bisnis dan permintaan ini. Kalimat yang bisa ditempel ke bisnis mana aja itu tandanya asal jawab.
+- Sebelum setor, cek ulang: sesuai permintaan, formatnya bener, gak ada bagian yang kepotong atau diganti "...".`;
+
 export function personaPrompt(agentId) {
   const agent = getAgent(agentId);
   const business = getSetting('business', {});
@@ -113,6 +122,8 @@ export function personaPrompt(agentId) {
     business.about && `Tentang bisnisnya: ${business.about}`,
     business.audience && `Target audiens / gaya: ${business.audience}`,
     'Pakai Bahasa Indonesia yang santai tapi profesional. Konkret, jangan bertele-tele.',
+    WORK_STANDARD,
+    coachingPrompt(agentId),
   ].filter(Boolean).join('\n');
 }
 

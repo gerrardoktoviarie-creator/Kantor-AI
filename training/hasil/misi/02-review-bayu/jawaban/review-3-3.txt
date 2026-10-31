@@ -1,0 +1,16 @@
+Tidak bisa diperbaiki lewat file yang diberikan — saya tidak punya isi lengkap `db/migrations/002-stok.sql`, `public/app.js` sebelum/akhir, `public/index.html`, dan **tidak ada `server.js` yang menampilkan baris-baris handler penjualan/batal/produk** (isi server.js di atas sudah berisi cabang migrasi `<3`, tapi masih belum jelas ada di mana bug `body.find is not a function`, `201 !== 409`, `1 !== 5`, dan urutan migrasi yang belum dijalankan pada DB versi 1 → 2 → 3).
+
+Yang bisa saya pastikan dari data yang ada:
+- `db/migrations/003-kategori.sql`, `db/schema.sql`, dan server.js migrasi sudah benar (DEFAULT 'minuman', user_version 3, cabang `<3` ada).
+- `public/index.html` **sudah punya** `<ul id="menu">` dan `<ul id="history">` — jadi klaim "id #riwayat gak ada" dari bos itu **sudah teratasi** di file saat ini (bisa jadi bos merujuk ke versi app.js yang lama, bukan yang ini).
+- `app.js` tidak ada lagi `innerHTML` yang diisi data, dan `cancel()` sudah memanggil endpoint `/api/sales/${saleId}` (sudah benar) — tapi **tidak ada pemanggilan refresh daftar menu/stok setelah batal**: `loadMenu()` dipanggil lewat `sell()`, tapi `cancel()` tidak memanggil `loadMenu()` di versi ini. Kalau ini yang dimaksud "stok tombol menu gak update setelah batal", perbaikannya cuma satu baris: nambah `loadMenu()` ke `cancel()`.
+
+Untuk mengaudit bug `body.find is not a function`, `201 !== 409`, `1 !== 5` (penjualan hari sebelumnya), dan urutan DB versi 1 → 2 → 3, **perlu saya lihat file server.js yang masih punya bug itu** (bukan versi yang sudah diperbaiki) serta `app.js` versi yang masih manggil `/api/sale/`. Tanpa file-file sumber itu, kalau saya nebak baris mana yang salah, saya bisa malah merusak bagian yang sudah aman (restock, jual, batal).
+
+File yang perlu bos kirim ulang buat saya audit per baris:
+- `server.js` (sumber bug, sebelum diperbaiki Bayu minggu lalu)
+- `db/migrations/002-stok.sql`
+- `public/app.js` versi yang masih pakai `/api/sale/`
+- `public/index.html` versi yang masih belum punya `#history` (kalau memang pernah ada)
+
+Setelah itu saya bisa kirim perbaikan minimal, satu file per bug, tanpa sentuh yang udah jalan.
